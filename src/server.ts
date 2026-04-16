@@ -1,167 +1,196 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-const ContextSchema = z.object({
-  action_type: z.string().describe("The type of action being evaluated"),
-  actor_id: z.string().describe("The ID of the actor requesting the action"),
-  environment: z.string().describe("The environment (e.g. production, staging)"),
-  approvals: z
-    .array(z.string())
-    .optional()
-    .describe("List of approver IDs who have approved the action"),
-  change_window: z
-    .string()
-    .optional()
-    .describe("The change window identifier for scheduled maintenance"),
-});
-
-const EvaluateSchema = ContextSchema;
-
-const VerifyPermitSchema = ContextSchema.extend({
-  permit_token: z.string().describe("The permit token returned from evaluate"),
-});
+export const VERSION = "1.0.0";
 
 interface EvaluateResponse {
   decision: string;
-  permit_token?: string;
+  permit_token: string;
+  reason?: string;
+  audit_id?: string;
+  conditions?: string[];
 }
 
 interface VerifyPermitResponse {
   outcome: string;
   valid: boolean;
+  reason?: string;
+  audit_id?: string;
 }
 
-function getConfig(): { apiKey: string; anonKey: string; baseUrl: string } {
+function deny(reason: string) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ decision: "deny", reason }) }],
+    isError: true as const,
+  };
+}
+
+async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const baseUrl = (
+    process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.com"
+  ).replace(/\/+$/, "");
   const apiKey = process.env.ATLASENT_API_KEY ?? "";
   const anonKey = process.env.ATLASENT_ANON_KEY ?? "";
-  const baseUrl =
-    process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.io";
 
-  return { apiKey, anonKey, baseUrl };
-}
+  const url = `${baseUrl}${path}`;
 
-async function callAtlaSent<T>(
-  path: string,
-  body: Record<string, unknown>
-): Promise<T> {
-  const { apiKey, anonKey, baseUrl } = getConfig();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "User-Agent": `@atlasent/mcp-server/${VERSION}`,
+  };
+  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+  if (anonKey) headers["x-anon-key"] = anonKey;
 
-  const response = await fetch(`${baseUrl}${path}`, {
+  const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      apikey: anonKey,
-    },
+    headers,
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
   });
 
-  if (!response.ok) {
-    throw new Error(
-      `AtlaSent API error: ${response.status} ${response.statusText}`
-    );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`AtlaSent API ${res.status}: ${text}`);
   }
 
-  return response.json() as Promise<T>;
+  return (await res.json()) as T;
 }
+
+const actionType = z.string().describe(
+  "The action the agent is about to perform (e.g. deploy, delete, merge, execute_query, send_email)."
+);
+const actorId = z.string().describe(
+  "Identifier for the user or service account the agent is acting on behalf of."
+);
+const environment = z.string().describe(
+  "Target environment for the action (e.g. production, staging, development)."
+);
+const approvals = z.array(z.string()).optional().describe(
+  "Approval identifiers already obtained for this action (e.g. ticket IDs, reviewer handles)."
+);
+const changeWindow = z.string().optional().describe(
+  "ISO-8601 time window during which the change is permitted (e.g. 2025-01-15T02:00:00Z/PT4H)."
+);
 
 export function createServer(): McpServer {
   const server = new McpServer({
-    name: "atlasent-mcp-server",
-    version: "1.0.0",
+    name: "@atlasent/mcp-server",
+    version: VERSION,
   });
 
-  server.tool(
+  server.registerTool(
     "evaluate",
-    "Evaluate whether an action should be permitted by calling the AtlaSent policy engine. Returns a decision (allow/deny) and a permit_token when allowed.",
-    EvaluateSchema.shape,
+    {
+      title: "AtlaSent — Evaluate Action",
+      description:
+        "Call this BEFORE performing any sensitive action. Sends the action context to " +
+        "AtlaSent and returns an authorization decision. If the decision is 'allow', " +
+        "you will receive a permit_token — pass it to verify_permit after completing the " +
+        "action. If the decision is 'deny', you MUST NOT proceed. If 'escalate', inform " +
+        "the user that manual approval is required.",
+      inputSchema: {
+        action_type: actionType,
+        actor_id: actorId,
+        environment,
+        approvals,
+        change_window: changeWindow,
+      },
+      annotations: {
+        title: "AtlaSent — Evaluate Action",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
     async (args) => {
       try {
-        const { action_type, actor_id, environment, approvals, change_window } =
-          args;
-
         const body: Record<string, unknown> = {
-          action_type,
-          actor_id,
-          environment,
+          action_type: args.action_type,
+          actor_id: args.actor_id,
+          environment: args.environment,
         };
-        if (approvals !== undefined) body.approvals = approvals;
-        if (change_window !== undefined) body.change_window = change_window;
+        if (args.approvals !== undefined) body.approvals = args.approvals;
+        if (args.change_window !== undefined) body.change_window = args.change_window;
 
-        const result = await callAtlaSent<EvaluateResponse>(
-          "/v1-evaluate",
-          body
-        );
+        const data = await post<EvaluateResponse>("/v1-evaluate", body);
 
         return {
           content: [
             {
-              type: "text",
-              text: JSON.stringify(result),
+              type: "text" as const,
+              text: JSON.stringify({
+                decision: data.decision,
+                permit_token: data.permit_token,
+                ...(data.reason && { reason: data.reason }),
+                ...(data.audit_id && { audit_id: data.audit_id }),
+                ...(data.conditions?.length && { conditions: data.conditions }),
+              }),
             },
           ],
         };
-      } catch {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ decision: "deny" }),
-            },
-          ],
-        };
+      } catch (err) {
+        return deny(err instanceof Error ? err.message : String(err));
       }
-    }
+    },
   );
 
-  server.tool(
+  server.registerTool(
     "verify_permit",
-    "Verify a previously issued permit token is still valid by calling the AtlaSent policy engine. Returns outcome and valid flag.",
-    VerifyPermitSchema.shape,
+    {
+      title: "AtlaSent — Verify Permit",
+      description:
+        "Call this AFTER completing a previously authorized action. Sends the permit_token " +
+        "(returned by evaluate) back to AtlaSent to confirm the action was performed " +
+        "within its authorized scope. Returns whether the permit is still valid. " +
+        "This closes the audit loop — every evaluate should be followed by a verify_permit.",
+      inputSchema: {
+        permit_token: z.string().describe(
+          "The permit_token returned by a prior evaluate call."
+        ),
+        action_type: actionType,
+        actor_id: actorId,
+        environment,
+        approvals,
+        change_window: changeWindow,
+      },
+      annotations: {
+        title: "AtlaSent — Verify Permit",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
     async (args) => {
       try {
-        const {
-          permit_token,
-          action_type,
-          actor_id,
-          environment,
-          approvals,
-          change_window,
-        } = args;
-
         const body: Record<string, unknown> = {
-          permit_token,
-          action_type,
-          actor_id,
-          environment,
+          permit_token: args.permit_token,
+          action_type: args.action_type,
+          actor_id: args.actor_id,
+          environment: args.environment,
         };
-        if (approvals !== undefined) body.approvals = approvals;
-        if (change_window !== undefined) body.change_window = change_window;
+        if (args.approvals !== undefined) body.approvals = args.approvals;
+        if (args.change_window !== undefined) body.change_window = args.change_window;
 
-        const result = await callAtlaSent<VerifyPermitResponse>(
-          "/v1-verify-permit",
-          body
-        );
+        const data = await post<VerifyPermitResponse>("/v1-verify-permit", body);
 
         return {
           content: [
             {
-              type: "text",
-              text: JSON.stringify(result),
+              type: "text" as const,
+              text: JSON.stringify({
+                outcome: data.outcome,
+                valid: data.valid,
+                ...(data.reason && { reason: data.reason }),
+                ...(data.audit_id && { audit_id: data.audit_id }),
+              }),
             },
           ],
         };
-      } catch {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ outcome: "deny", valid: false }),
-            },
-          ],
-        };
+      } catch (err) {
+        return deny(err instanceof Error ? err.message : String(err));
       }
-    }
+    },
   );
 
   return server;

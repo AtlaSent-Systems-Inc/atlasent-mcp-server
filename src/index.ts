@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
 
@@ -9,6 +10,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error("Fatal:", err);
   process.exit(1);
 });

@@ -1,37 +1,14 @@
 # @atlasent/mcp-server
 
-MCP server that exposes AtlaSent **evaluate** and **verify-permit** as tools any MCP-compatible AI agent can call.
+**Govern every AI agent action in 60 seconds.**
 
-## Overview
+AtlaSent's MCP server plugs into any [Model Context Protocol](https://modelcontextprotocol.io)-compatible agent — Claude Desktop, Cursor, Copilot, LangChain, and more. Every action the agent takes is evaluated against your policies before execution and verified after. If an action is unauthorized, it's denied before anything happens. No code changes required.
 
-This package implements a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [AtlaSent](https://atlasent.io). It exposes two tools:
-
-- **`evaluate`** — Calls `POST /v1-evaluate` to determine whether an action should be permitted. Returns a `decision` (`allow`/`deny`) and a `permit_token` when allowed.
-- **`verify_permit`** — Calls `POST /v1-verify-permit` to verify that a previously issued permit token is still valid. Returns an `outcome` and a `valid` boolean.
-
-The server is **fail-closed**: any error (network failure, non-OK HTTP response, etc.) results in a `deny` response.
-
-## Installation
-
-```bash
-npm install @atlasent/mcp-server
-```
-
-## Configuration
-
-Configure the server using environment variables:
-
-| Variable             | Required | Description                                      |
-|----------------------|----------|--------------------------------------------------|
-| `ATLASENT_API_KEY`   | Yes      | Your AtlaSent API key (used as Bearer token)     |
-| `ATLASENT_ANON_KEY`  | Yes      | Your AtlaSent anonymous/public key               |
-| `ATLASENT_BASE_URL`  | No       | AtlaSent API base URL (default: `https://api.atlasent.io`) |
-
-## Usage
+## Quick Start
 
 ### Claude Desktop
 
-Add the following to your Claude Desktop configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
@@ -40,98 +17,219 @@ Add the following to your Claude Desktop configuration file (`~/Library/Applicat
       "command": "npx",
       "args": ["-y", "@atlasent/mcp-server"],
       "env": {
-        "ATLASENT_API_KEY": "your-api-key-here",
-        "ATLASENT_ANON_KEY": "your-anon-key-here",
-        "ATLASENT_BASE_URL": "https://api.atlasent.io"
+        "ATLASENT_API_KEY": "as_live_xxxxxxxxxxxxxxxx"
       }
     }
   }
 }
 ```
 
-### Running directly
+### Cursor
 
-```bash
-ATLASENT_API_KEY=your-key ATLASENT_ANON_KEY=your-anon-key npx @atlasent/mcp-server
+Add to `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json` globally):
+
+```json
+{
+  "mcpServers": {
+    "atlasent": {
+      "command": "npx",
+      "args": ["-y", "@atlasent/mcp-server"],
+      "env": {
+        "ATLASENT_API_KEY": "as_live_xxxxxxxxxxxxxxxx"
+      }
+    }
+  }
+}
 ```
 
-## Tools
+Restart Cursor. AtlaSent appears in **Settings > MCP** as a connected server.
+
+### Claude Code
+
+```bash
+claude mcp add atlasent -- npx -y @atlasent/mcp-server
+```
+
+Set your API key via environment variable before launching:
+
+```bash
+export ATLASENT_API_KEY="as_live_xxxxxxxxxxxxxxxx"
+```
+
+### Any MCP Client
+
+The server speaks [stdio transport](https://modelcontextprotocol.io/docs/concepts/transports#stdio). Point your MCP client at:
+
+```
+npx -y @atlasent/mcp-server
+```
+
+Pass `ATLASENT_API_KEY` as an environment variable.
+
+## How It Works
+
+The server exposes two tools that form a **governance loop** around every agent action:
+
+```
+  Agent wants to act
+        │
+        ▼
+  ┌─────────────┐     ┌──────────────────────────┐
+  │  evaluate    │────▶│ AtlaSent Policy Engine    │
+  └─────────────┘     │ • Who is the actor?       │
+        │             │ • What are they doing?     │
+        ▼             │ • In which environment?    │
+   allow / deny       │ • Do they have approvals?  │
+   / escalate         │ • Is it the right window?  │
+        │             └──────────────────────────┘
+        ▼
+  Agent performs action (only if allowed)
+        │
+        ▼
+  ┌─────────────────┐
+  │  verify_permit   │──▶ Closes the audit loop
+  └─────────────────┘
+```
 
 ### `evaluate`
 
-Evaluate whether an action should be permitted by the AtlaSent policy engine.
+Called **before** the agent acts. Sends the action context to AtlaSent and returns a decision.
 
-**Input parameters:**
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `action_type` | `string` | yes | What the agent is doing (`deploy`, `delete`, `execute_query`, `send_email`) |
+| `actor_id` | `string` | yes | User or service account the agent acts on behalf of |
+| `environment` | `string` | yes | Target environment (`production`, `staging`, `development`) |
+| `approvals` | `string[]` | no | Approval IDs already obtained (ticket IDs, reviewer handles) |
+| `change_window` | `string` | no | ISO-8601 time window (`2025-01-15T02:00:00Z/PT4H`) |
 
-| Parameter       | Type       | Required | Description                                            |
-|-----------------|------------|----------|--------------------------------------------------------|
-| `action_type`   | `string`   | Yes      | The type of action being evaluated                     |
-| `actor_id`      | `string`   | Yes      | The ID of the actor requesting the action              |
-| `environment`   | `string`   | Yes      | The environment (e.g., `production`, `staging`)        |
-| `approvals`     | `string[]` | No       | List of approver IDs who have approved the action      |
-| `change_window` | `string`   | No       | The change window identifier for scheduled maintenance |
-
-**Output:**
+**Returns:**
 
 ```json
 {
   "decision": "allow",
-  "permit_token": "eyJ..."
+  "permit_token": "pt_abc123...",
+  "audit_id": "aud_789...",
+  "conditions": ["requires_two_person_review"]
 }
 ```
-
-On error (fail-closed):
-```json
-{ "decision": "deny" }
-```
-
----
 
 ### `verify_permit`
 
-Verify that a previously issued permit token is still valid.
+Called **after** the agent completes the action. Confirms the action was performed within its authorized scope.
 
-**Input parameters:**
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `permit_token` | `string` | yes | Token from the prior `evaluate` call |
+| `action_type` | `string` | yes | Same action type as the evaluate call |
+| `actor_id` | `string` | yes | Same actor |
+| `environment` | `string` | yes | Same environment |
+| `approvals` | `string[]` | no | Approvals obtained |
+| `change_window` | `string` | no | Change window |
 
-| Parameter       | Type       | Required | Description                                            |
-|-----------------|------------|----------|--------------------------------------------------------|
-| `permit_token`  | `string`   | Yes      | The permit token returned from `evaluate`              |
-| `action_type`   | `string`   | Yes      | The type of action being evaluated                     |
-| `actor_id`      | `string`   | Yes      | The ID of the actor requesting the action              |
-| `environment`   | `string`   | Yes      | The environment (e.g., `production`, `staging`)        |
-| `approvals`     | `string[]` | No       | List of approver IDs who have approved the action      |
-| `change_window` | `string`   | No       | The change window identifier for scheduled maintenance |
-
-**Output:**
+**Returns:**
 
 ```json
 {
-  "outcome": "allowed",
-  "valid": true
+  "outcome": "verified",
+  "valid": true,
+  "audit_id": "aud_789..."
 }
 ```
 
-On error (fail-closed):
+## What Happens When an Agent Tries an Unauthorized Action
+
+When an agent connected to AtlaSent attempts something it shouldn't — say, deploying to production without approvals during a change freeze — here's what happens:
+
+**1. The agent calls `evaluate` before acting:**
 ```json
-{ "outcome": "deny", "valid": false }
+{
+  "action_type": "deploy",
+  "actor_id": "eng-intern-jane",
+  "environment": "production"
+}
 ```
+
+**2. AtlaSent denies the action:**
+```json
+{
+  "decision": "deny",
+  "reason": "Policy violation: production deploys require at least one approval and an active change window. No approvals provided; no change window specified."
+}
+```
+
+**3. The agent stops.** The tool description instructs the agent that it MUST NOT proceed when the decision is `deny`. The agent will inform the user:
+
+> *"I'm unable to deploy to production. AtlaSent policy requires at least one approval and a scheduled change window. Would you like me to deploy to staging instead, or help you request an approval?"*
+
+**4. If the API is unreachable or returns an error**, the server fails closed — it returns `deny` automatically. No silent failures, no default-allow.
+
+## The Audit Trail
+
+Every `evaluate` and `verify_permit` call is recorded by AtlaSent. Your dashboard shows:
+
+| Timestamp | Actor | Action | Environment | Decision | Permit | Verified |
+|---|---|---|---|---|---|---|
+| 2025-01-15 14:32:01 | `eng-intern-jane` | `deploy` | `production` | **deny** | — | — |
+| 2025-01-15 14:32:45 | `eng-intern-jane` | `deploy` | `staging` | **allow** | `pt_abc123` | yes |
+| 2025-01-15 15:01:12 | `eng-lead-alex` | `deploy` | `production` | **allow** | `pt_def456` | yes |
+| 2025-01-15 15:10:03 | `agent-copilot-7` | `delete` | `production` | **deny** | — | — |
+
+Every agent action has a paper trail. You can see who did what, when, whether it was allowed, and whether the permit was verified after execution. Unverified permits (action was allowed but `verify_permit` was never called) are flagged automatically.
+
+## Configuration
+
+| Environment Variable | Required | Default | Description |
+|---|---|---|---|
+| `ATLASENT_API_KEY` | yes | — | Your AtlaSent API key |
+| `ATLASENT_ANON_KEY` | no | — | Public/anonymous key (sent as `x-anon-key` header) |
+| `ATLASENT_BASE_URL` | no | `https://api.atlasent.com` | AtlaSent API base URL |
+
+## Fail-Closed by Design
+
+This server treats safety as a hard constraint, not a preference:
+
+- **API unreachable?** → deny
+- **Request timeout?** → deny (10 second limit)
+- **Malformed response?** → deny
+- **Any exception?** → deny
+
+The agent never proceeds without an explicit `allow` from AtlaSent.
 
 ## Development
 
 ```bash
-# Install dependencies
+git clone https://github.com/AtlaSent-Systems-Inc/mcp-server.git
+cd mcp-server
 npm install
-
-# Build
 npm run build
-
-# Run tests
 npm test
-
-# Type-check
-npm run lint
 ```
+
+### Integration tests
+
+Run against a live AtlaSent API:
+
+```bash
+ATLASENT_API_KEY=your-key npm run test:integration
+```
+
+Without `ATLASENT_API_KEY` set, integration tests skip automatically.
+
+## Publishing
+
+To publish a new version:
+
+1. Add `NPM_TOKEN` to GitHub repo secrets
+2. Tag and push:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The CI workflow builds, tests, and publishes to npm automatically.
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+[MIT](LICENSE)
