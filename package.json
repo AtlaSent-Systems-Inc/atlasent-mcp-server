@@ -1,0 +1,46 @@
+{
+  "name": "@atlasent/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server that exposes AtlaSent evaluate and verify-permit as tools any MCP-compatible AI agent can call.",
+  "main": "dist/index.js",
+  "bin": {
+    "atlasent-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node --max-old-space-size=4096 ./node_modules/.bin/tsc",
+    "start": "node dist/index.js",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "lint": "node --max-old-space-size=4096 ./node_modules/.bin/tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "atlasent",
+    "model-context-protocol"
+  ],
+  "author": "AtlaSent Systems Inc",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.15.3",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.3.2",
+    "typescript": "^5.8.3"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.ts"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
