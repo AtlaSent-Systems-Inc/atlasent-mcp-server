@@ -1,7 +1,7 @@
 {
   "name": "@atlasent/mcp-server",
   "version": "1.0.0",
-  "description": "MCP server that exposes AtlaSent evaluate and verify-permit as tools any MCP-compatible AI agent can call.",
+  "description": "Add AtlaSent governance to any MCP-compatible AI agent. Evaluate actions before execution, verify permits after — fail-closed by default.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -14,19 +14,36 @@
   ],
   "scripts": {
     "build": "tsc",
+    "test": "node --test dist/server.test.js",
+    "test:integration": "node --test dist/integration.test.js",
     "start": "node dist/index.js",
     "prepare": "tsc"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/AtlaSent-Systems-Inc/mcp-server.git"
+  },
+  "homepage": "https://github.com/AtlaSent-Systems-Inc/mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/AtlaSent-Systems-Inc/mcp-server/issues"
   },
   "keywords": [
     "mcp",
     "atlasent",
     "model-context-protocol",
     "ai-safety",
-    "policy-evaluation"
+    "ai-governance",
+    "policy-evaluation",
+    "claude",
+    "cursor",
+    "copilot",
+    "langchain"
   ],
   "author": "AtlaSent Systems Inc.",
   "license": "MIT",
