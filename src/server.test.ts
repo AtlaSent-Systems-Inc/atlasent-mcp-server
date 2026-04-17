@@ -198,6 +198,38 @@ describe("evaluate", () => {
     assert.equal(data.decision, "deny");
     assert.equal(result.isError, true);
   });
+
+  it("reads env vars on each call, not at module load", async () => {
+    const fetcher = mockFetch({ decision: "allow", permit_token: "pt_1" });
+    globalThis.fetch = fetcher;
+    const { client } = await setup();
+
+    process.env.ATLASENT_API_KEY = "first-key";
+    await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    process.env.ATLASENT_API_KEY = "second-key";
+    await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+
+    const h1 = (fetcher.mock.calls[0].arguments[1] as RequestInit).headers as Record<string, string>;
+    const h2 = (fetcher.mock.calls[1].arguments[1] as RequestInit).headers as Record<string, string>;
+    assert.equal(h1["Authorization"], "Bearer first-key");
+    assert.equal(h2["Authorization"], "Bearer second-key");
+
+    delete process.env.ATLASENT_API_KEY;
+  });
+
+  it("normalizes trailing slash in ATLASENT_BASE_URL", async () => {
+    process.env.ATLASENT_BASE_URL = "https://api.example.com///";
+    const fetcher = mockFetch({ decision: "allow", permit_token: "pt_1" });
+    globalThis.fetch = fetcher;
+    const { client } = await setup();
+
+    await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+
+    const url = fetcher.mock.calls[0].arguments[0] as string;
+    assert.equal(url, "https://api.example.com/v1-evaluate");
+
+    delete process.env.ATLASENT_BASE_URL;
+  });
 });
 
 describe("verify_permit", () => {
