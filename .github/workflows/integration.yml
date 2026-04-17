@@ -1,22 +1,41 @@
-name: Integration
+name: Integration Tests
 
 on:
+  schedule:
+    - cron: "0 3 * * *"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to test
+        required: false
+        default: main
 
 jobs:
   integration:
+    name: Live API integration
     runs-on: ubuntu-latest
     environment: integration
+    if: ${{ secrets.ATLASENT_API_KEY != '' }}
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || 'main' }}
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "20"
           cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm run test:integration
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run integration tests
+        run: npm run test:integration
         env:
           ATLASENT_API_KEY: ${{ secrets.ATLASENT_API_KEY }}
-          ATLASENT_ANON_KEY: ${{ secrets.ATLASENT_ANON_KEY }}
-          ATLASENT_BASE_URL: ${{ secrets.ATLASENT_BASE_URL }}
+          ATLASENT_BASE_URL: ${{ vars.ATLASENT_BASE_URL }}
+          ATLASENT_MODE: remote
