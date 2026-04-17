@@ -1,61 +1,22 @@
+/**
+ * MCP server exposing AtlaSent authorization as tools.
+ *
+ *   evaluate       — ask for a decision; agent gates itself on the result
+ *   verify_permit  — close the audit loop after the action runs
+ *   deploy_service — DEMO protected tool: every call goes through `authorize()`
+ *                    BEFORE executing the deploy. Denied calls never run.
+ *
+ * The `deploy_service` tool is the small end-to-end proof: it owns the
+ * interception point. Look at its handler to see the exact pattern every
+ * protected tool should follow.
+ */
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { toolResult, type ActionContext } from "./decision.js";
+import { authorize, verify, getMode } from "./engine.js";
 
 export const VERSION = "1.0.0";
-
-interface EvaluateResponse {
-  decision: string;
-  permit_token: string;
-  reason?: string;
-  audit_id?: string;
-  conditions?: string[];
-}
-
-interface VerifyPermitResponse {
-  outcome: string;
-  valid: boolean;
-  reason?: string;
-  audit_id?: string;
-}
-
-function deny(reason: string) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify({ decision: "deny", reason }) }],
-    isError: true as const,
-  };
-}
-
-async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const baseUrl = (
-    process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.com"
-  ).replace(/\/+$/, "");
-  const apiKey = process.env.ATLASENT_API_KEY ?? "";
-  const anonKey = process.env.ATLASENT_ANON_KEY ?? "";
-
-  const url = `${baseUrl}${path}`;
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    "User-Agent": `@atlasent/mcp-server/${VERSION}`,
-  };
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  if (anonKey) headers["x-anon-key"] = anonKey;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`AtlaSent API ${res.status}: ${text}`);
-  }
-
-  return (await res.json()) as T;
-}
 
 const actionType = z.string().describe(
   "The action the agent is about to perform (e.g. deploy, delete, merge, execute_query, send_email)."
@@ -73,22 +34,29 @@ const changeWindow = z.string().optional().describe(
   "ISO-8601 time window during which the change is permitted (e.g. 2025-01-15T02:00:00Z/PT4H)."
 );
 
+function log(event: string, data: Record<string, unknown>): void {
+  // Log to stderr so we don't interfere with MCP stdio messaging.
+  const line = JSON.stringify({ ts: new Date().toISOString(), event, mode: getMode(), ...data });
+  process.stderr.write(line + "\n");
+}
+
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "@atlasent/mcp-server",
     version: VERSION,
   });
 
+  // -------------------------------------------------------------------------
+  // evaluate — for agents that gate their own tool calls
+  // -------------------------------------------------------------------------
   server.registerTool(
     "evaluate",
     {
       title: "AtlaSent — Evaluate Action",
       description:
-        "Call this BEFORE performing any sensitive action. Sends the action context to " +
-        "AtlaSent and returns an authorization decision. If the decision is 'allow', " +
-        "you will receive a permit_token — pass it to verify_permit after completing the " +
-        "action. If the decision is 'deny', you MUST NOT proceed. If 'escalate', inform " +
-        "the user that manual approval is required.",
+        "Call this BEFORE performing any sensitive action. Returns a Decision: " +
+        "`allow` (use the permit_token and proceed), `deny` (you MUST NOT proceed), " +
+        "or `hold` (action is queued for human review — do not proceed, inform the user).",
       inputSchema: {
         action_type: actionType,
         actor_id: actorId,
@@ -104,50 +72,33 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
-      try {
-        const body: Record<string, unknown> = {
-          action_type: args.action_type,
-          actor_id: args.actor_id,
-          environment: args.environment,
-        };
-        if (args.approvals !== undefined) body.approvals = args.approvals;
-        if (args.change_window !== undefined) body.change_window = args.change_window;
-
-        const data = await post<EvaluateResponse>("/v1-evaluate", body);
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                decision: data.decision,
-                permit_token: data.permit_token,
-                ...(data.reason && { reason: data.reason }),
-                ...(data.audit_id && { audit_id: data.audit_id }),
-                ...(data.conditions?.length && { conditions: data.conditions }),
-              }),
-            },
-          ],
-        };
-      } catch (err) {
-        return deny(err instanceof Error ? err.message : String(err));
-      }
+      const ctx: ActionContext = {
+        action_type: args.action_type,
+        actor_id: args.actor_id,
+        environment: args.environment,
+        ...(args.approvals && { approvals: args.approvals }),
+        ...(args.change_window && { change_window: args.change_window }),
+      };
+      const decision = await authorize(ctx);
+      log("evaluate", { ctx, decision });
+      return toolResult(decision);
     },
   );
 
+  // -------------------------------------------------------------------------
+  // verify_permit — close the audit loop
+  // -------------------------------------------------------------------------
   server.registerTool(
     "verify_permit",
     {
       title: "AtlaSent — Verify Permit",
       description:
-        "Call this AFTER completing a previously authorized action. Sends the permit_token " +
-        "(returned by evaluate) back to AtlaSent to confirm the action was performed " +
-        "within its authorized scope. Returns whether the permit is still valid. " +
-        "This closes the audit loop — every evaluate should be followed by a verify_permit.",
+        "Call this AFTER completing an authorized action. Confirms the permit " +
+        "issued by `evaluate` is still valid. Outcome is `verified`, `expired`, " +
+        "`invalid`, or `error`. If `valid` is false, the action should be flagged " +
+        "for review.",
       inputSchema: {
-        permit_token: z.string().describe(
-          "The permit_token returned by a prior evaluate call."
-        ),
+        permit_token: z.string().describe("The permit_token returned by a prior evaluate call."),
         action_type: actionType,
         actor_id: actorId,
         environment,
@@ -162,34 +113,83 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
-      try {
-        const body: Record<string, unknown> = {
-          permit_token: args.permit_token,
-          action_type: args.action_type,
-          actor_id: args.actor_id,
-          environment: args.environment,
-        };
-        if (args.approvals !== undefined) body.approvals = args.approvals;
-        if (args.change_window !== undefined) body.change_window = args.change_window;
+      const ctx: ActionContext = {
+        action_type: args.action_type,
+        actor_id: args.actor_id,
+        environment: args.environment,
+        ...(args.approvals && { approvals: args.approvals }),
+        ...(args.change_window && { change_window: args.change_window }),
+      };
+      const result = await verify(args.permit_token, ctx);
+      log("verify_permit", { ctx, permit_token: args.permit_token, result });
+      return toolResult(result);
+    },
+  );
 
-        const data = await post<VerifyPermitResponse>("/v1-verify-permit", body);
+  // -------------------------------------------------------------------------
+  // deploy_service — DEMO protected tool
+  //
+  // This is the authorization-before-execution proof. The tool:
+  //   1. builds an ActionContext
+  //   2. calls authorize(ctx) — this is the INTERCEPTION POINT
+  //   3. if decision is not "allow", returns the decision as-is (call blocked)
+  //   4. otherwise executes, then returns the allow decision with the result
+  //
+  // In production, your domain tools live on other MCP servers. They call
+  // AtlaSent's evaluate tool before executing. This demo co-locates the
+  // pattern so you can run `evaluate → act → verify` end-to-end today.
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "deploy_service",
+    {
+      title: "Demo: Deploy Service (authorization-gated)",
+      description:
+        "Example protected tool. Every call is authorized by AtlaSent BEFORE the " +
+        "deploy runs. Denied or held calls are blocked and never touch the target " +
+        "system. On allow, the deploy executes and a permit_token is returned.",
+      inputSchema: {
+        service_name: z.string().describe("Name of the service to deploy."),
+        environment,
+        actor_id: actorId,
+        approvals,
+        change_window: changeWindow,
+      },
+      annotations: {
+        title: "Demo: Deploy Service",
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      const ctx: ActionContext = {
+        action_type: "deploy",
+        actor_id: args.actor_id,
+        environment: args.environment,
+        ...(args.approvals && { approvals: args.approvals }),
+        ...(args.change_window && { change_window: args.change_window }),
+      };
 
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                outcome: data.outcome,
-                valid: data.valid,
-                ...(data.reason && { reason: data.reason }),
-                ...(data.audit_id && { audit_id: data.audit_id }),
-              }),
-            },
-          ],
-        };
-      } catch (err) {
-        return deny(err instanceof Error ? err.message : String(err));
+      // ---- INTERCEPTION POINT --------------------------------------------
+      const decision = await authorize(ctx);
+      log("deploy_service.authorize", { service: args.service_name, ctx, decision });
+
+      if (decision.decision !== "allow") {
+        log("deploy_service.blocked", { service: args.service_name, reason: (decision as { reason?: string }).reason });
+        return toolResult(decision);
       }
+      // --------------------------------------------------------------------
+
+      // Execute the deploy (simulated — real integrations would call out here).
+      const result = {
+        status: "deployed",
+        service: args.service_name,
+        environment: args.environment,
+        deployed_at: new Date().toISOString(),
+      };
+      log("deploy_service.executed", { service: args.service_name, permit_token: decision.permit_token, result });
+
+      return toolResult(decision, { result });
     },
   );
 
