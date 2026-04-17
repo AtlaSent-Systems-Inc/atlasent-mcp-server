@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "./server.js";
 
-const REQUIRED_VARS = ["ATLASENT_API_KEY"];
+const REQUIRED_VARS = ["ATLASENT_API_KEY", "ATLASENT_BASE_URL"];
 
 function skipUnlessConfigured(): void {
   for (const v of REQUIRED_VARS) {
@@ -13,6 +13,8 @@ function skipUnlessConfigured(): void {
       process.exit(0);
     }
   }
+  // Force remote mode — integration tests hit the live hosted backend.
+  process.env.ATLASENT_MODE = "remote";
 }
 
 let client: Client;
@@ -48,7 +50,7 @@ describe("integration: evaluate → verify_permit", () => {
     const data = parseResult(result);
 
     assert.ok(
-      ["allow", "deny", "escalate"].includes(data.decision as string),
+      ["allow", "deny", "hold"].includes(data.decision as string),
       `Unexpected decision: ${data.decision}`,
     );
 

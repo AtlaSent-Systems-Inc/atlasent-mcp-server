@@ -1,48 +1,83 @@
 # @atlasent/mcp-server
 
-MCP server that exposes AtlaSent policy evaluation to any MCP-compatible AI agent.
+MCP server that enforces `authorize-before-execute` for any MCP-compatible AI agent.
 
 ## Architecture
 
 ```
 src/
-  server.ts          — createServer() factory: registers both MCP tools, exports for tests
-  index.ts           — CLI entry point: creates server, connects stdio transport
-  server.test.ts     — Unit tests (16): mock fetch, use InMemoryTransport + MCP Client
-  integration.test.ts — Live API tests: require ATLASENT_API_KEY, skip otherwise
+  decision.ts         — Decision / VerifyResult types + toolResult() MCP envelope helper
+  localEngine.ts      — Tiny rules engine used when no hosted backend is configured
+  engine.ts           — authorize() / verify(): dispatches to local or remote; fail-closed wrapper
+  server.ts           — createServer(): registers evaluate, verify_permit, deploy_service (demo)
+  index.ts            — CLI entry point; connects stdio transport
+  server.test.ts      — 22 unit tests: tools/list, evaluate (local + remote), verify_permit, deploy_service
+  integration.test.ts — Live-API tests; require ATLASENT_API_KEY + ATLASENT_BASE_URL, skip otherwise
+
+examples/
+  demo.mjs            — End-to-end script: spawns server, drives evaluate → deploy → verify flow
+
+.github/workflows/
+  ci.yml              — build + test on push/PR, Node 18/20/22 matrix
+  integration.yml     — nightly integration tests against the hosted API
+  publish.yml         — npm publish --provenance on v* tag push
 ```
 
-Single module, no internal abstractions. `server.ts` owns all logic (API client, tool registration, fail-closed error handling). `index.ts` is just the stdio bootstrap.
+## Interception point
 
-## Build & Test
+Every protected tool follows the same pattern. See `server.ts`, the `deploy_service` handler:
+
+```ts
+const ctx: ActionContext = { action_type: "deploy", actor_id, environment, ... };
+const decision = await authorize(ctx);       // ← INTERCEPTION POINT
+if (decision.decision !== "allow") {
+  return toolResult(decision);                // blocked; nothing executes
+}
+const result = /* run the action */;
+return toolResult(decision, { result });
+```
+
+The guarantee: if `authorize()` does not return `allow`, the action code never runs. This is the one invariant the demo proves.
+
+## Mode dispatch
+
+`engine.getMode()` is read on every call (so hosts can flip modes without restart):
+
+- `ATLASENT_MODE=remote` → hosted AtlaSent API
+- `ATLASENT_MODE=local` → in-process rules engine
+- Unset → `remote` if both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are set, else `local`
+
+The hosted backend is a configuration swap. `authorizeRemote()` / `verifyRemote()` in `engine.ts` are the only adapters; everything above (tool handlers, tests, demo) is unchanged.
+
+## Build, test, run
 
 ```bash
-npm run build          # tsc → dist/
-npm test               # node --test dist/server.test.js
-npm run test:integration  # requires ATLASENT_API_KEY
+npm run build             # tsc → dist/
+npm test                  # 22 unit tests, no network
+npm run test:integration  # live API; needs ATLASENT_API_KEY + ATLASENT_BASE_URL
+npm run demo              # end-to-end demo in local mode
 ```
 
-Tests use Node's built-in test runner (node:test) with the MCP SDK's InMemoryTransport — no test framework deps. Global fetch is mocked per-test via `mock.fn()` and restored in afterEach.
+Tests use `node:test` + MCP SDK's `InMemoryTransport`. `globalThis.fetch` is mocked per-test in remote-mode tests; local-mode tests touch no network.
 
-## Key Design Decisions
+## Key design decisions
 
-- **Fail-closed**: every tool handler wraps the API call in try/catch and returns `{ decision: "deny", reason }` with `isError: true` on any failure. The agent never gets a silent pass.
-- **Env vars read at call time**: `ATLASENT_BASE_URL`, `ATLASENT_API_KEY`, `ATLASENT_ANON_KEY` are read inside `post()`, not at module load. This lets tests swap credentials between calls.
-- **10s request timeout**: `AbortSignal.timeout(10_000)` on every fetch. Prevents a hung API from blocking the agent indefinitely.
-- **Tool annotations**: `readOnlyHint: true`, `destructiveHint: false` — both tools are policy checks, not mutations.
+- **Fail-closed at every layer.** `authorize()` and `verify()` wrap everything in try/catch; any error → `{ decision: "deny" }` or `{ outcome: "error", valid: false }`.
+- **Env vars read at call time.** Let tests (and users) swap config without module reload.
+- **10s request timeout.** `AbortSignal.timeout()` on every fetch — a hung API must not block the agent.
+- **Normalized decision envelope.** One shape for `allow`/`deny`/`hold`, one shape for verification. Remote outputs are coerced into this shape (e.g. `escalate` → `hold`); unknown decisions collapse to `deny`.
+- **`isError` set only on failure.** MCP convention — hosts surface tool-call errors in their UI.
+- **Stderr structured logs.** Every authorize / execute / verify emits a JSON line to stderr. Doesn't interfere with stdio protocol on stdout.
 
-## API Endpoints
+## API contracts
 
-- `POST /v1-evaluate` — evaluate an action, returns `{ decision, permit_token, reason?, audit_id?, conditions? }`
-- `POST /v1-verify-permit` — verify a permit token, returns `{ outcome, valid, reason?, audit_id? }`
+Hosted backend:
 
-Auth: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
+- `POST /v1-evaluate` → `{ decision, permit_token?, reason?, audit_id?, conditions?, hold_id? }`
+- `POST /v1-verify-permit` → `{ outcome, valid, reason?, audit_id? }`
 
-## CI/CD
+Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
 
-- `.github/workflows/ci.yml` — build + test on push/PR to main, Node 18/20/22 matrix
-- `.github/workflows/publish.yml` — build + test + `npm publish --provenance` on `v*` tag push
+## npm publishing
 
-## npm Publishing
-
-Scoped package `@atlasent/mcp-server` with `publishConfig.access: public`. The `files` field limits the published tarball to `dist/`, `README.md`, and `LICENSE`. Requires `NPM_TOKEN` secret in GitHub repo settings.
+Scoped package `@atlasent/mcp-server`, `publishConfig.access: public`. Published tarball contents limited to `dist/`, `README.md`, `LICENSE` via the `files` field. Tag `v*` triggers `.github/workflows/publish.yml` which runs build, tests, and `npm publish --provenance` using the `NPM_TOKEN` repo secret.
