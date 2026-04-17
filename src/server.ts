@@ -1,17 +1,16 @@
 /**
- * MCP server exposing AtlaSent authorization as tools.
+ * MCP server exposing AtlaSent authorization as tools and resources.
  *
  *   evaluate       — ask for a decision; agent gates itself on the result
  *   verify_permit  — close the audit loop after the action runs
  *   deploy_service — DEMO protected tool: every call goes through `authorize()`
  *                    BEFORE executing the deploy. Denied calls never run.
  *
- * The `deploy_service` tool is the small end-to-end proof: it owns the
- * interception point. Look at its handler to see the exact pattern every
- * protected tool should follow.
+ * Resources:
+ *   atlasent://policies/{id} — expose policy/bundle definitions (read-only)
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { toolResult, type ActionContext } from "./decision.js";
 import { authorize, verify, getMode } from "./engine.js";
@@ -35,10 +34,57 @@ const changeWindow = z.string().optional().describe(
 );
 
 function log(event: string, data: Record<string, unknown>): void {
-  // Log to stderr so we don't interfere with MCP stdio messaging.
   const line = JSON.stringify({ ts: new Date().toISOString(), event, mode: getMode(), ...data });
   process.stderr.write(line + "\n");
 }
+
+/** Fetch a policy bundle from the remote AtlaSent API. */
+async function fetchRemotePolicy(id: string): Promise<Record<string, unknown> | null> {
+  const apiKey = process.env.ATLASENT_API_KEY;
+  const baseUrl = (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.io").replace(/\/+$/, "");
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch(`${baseUrl}/v1-bundles/${encodeURIComponent(id)}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** Built-in local policy definitions (used when mode is local). */
+const LOCAL_POLICIES: Record<string, Record<string, unknown>> = {
+  default: {
+    id: "default",
+    name: "Default Policy",
+    description: "Built-in local policy: allows all actions in non-production environments, holds production deploys.",
+    mode: "local",
+    rules: [
+      { decision: "allow", when: { field: "environment", neq: "production" } },
+      { decision: "hold", when: { field: "environment", eq: "production" }, reason: "Production actions require human review in local mode." },
+      { decision: "allow" },
+    ],
+  },
+  "production-deploy": {
+    id: "production-deploy",
+    name: "Production Deploy Gate",
+    description: "Requires approvals and a valid change window for production deployments.",
+    mode: "local",
+    rules: [
+      { decision: "deny", when: { field: "environment", eq: "production", approvals_lt: 2 }, reason: "At least 2 approvals required for production." },
+      { decision: "hold", when: { field: "environment", eq: "production", change_window: false }, reason: "Outside change window — action is queued for review." },
+      { decision: "allow", when: { field: "environment", eq: "production" } },
+      { decision: "allow", when: { field: "environment", neq: "production" } },
+    ],
+  },
+};
 
 export function createServer(): McpServer {
   const server = new McpServer({
@@ -128,16 +174,6 @@ export function createServer(): McpServer {
 
   // -------------------------------------------------------------------------
   // deploy_service — DEMO protected tool
-  //
-  // This is the authorization-before-execution proof. The tool:
-  //   1. builds an ActionContext
-  //   2. calls authorize(ctx) — this is the INTERCEPTION POINT
-  //   3. if decision is not "allow", returns the decision as-is (call blocked)
-  //   4. otherwise executes, then returns the allow decision with the result
-  //
-  // In production, your domain tools live on other MCP servers. They call
-  // AtlaSent's evaluate tool before executing. This demo co-locates the
-  // pattern so you can run `evaluate → act → verify` end-to-end today.
   // -------------------------------------------------------------------------
   server.registerTool(
     "deploy_service",
@@ -180,7 +216,6 @@ export function createServer(): McpServer {
       }
       // --------------------------------------------------------------------
 
-      // Execute the deploy (simulated — real integrations would call out here).
       const result = {
         status: "deployed",
         service: args.service_name,
@@ -190,6 +225,50 @@ export function createServer(): McpServer {
       log("deploy_service.executed", { service: args.service_name, permit_token: decision.permit_token, result });
 
       return toolResult(decision, { result });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent://policies/{id} — policy/bundle definitions resource
+  //
+  // In local mode: returns built-in policy definitions.
+  // In remote mode: fetches the published bundle from the AtlaSent API.
+  //
+  // Agents can read policies to understand what rules govern their actions
+  // before calling evaluate. This is a read-only, non-destructive operation.
+  // -------------------------------------------------------------------------
+  server.resource(
+    "atlasent-policy",
+    new ResourceTemplate("atlasent://policies/{id}", { list: undefined }),
+    async (uri, { id }) => {
+      const policyId = Array.isArray(id) ? id[0] : id;
+      log("resource.policies", { id: policyId });
+
+      let policy: Record<string, unknown> | null = null;
+
+      if (getMode() === "remote") {
+        policy = await fetchRemotePolicy(policyId);
+      }
+
+      if (!policy) {
+        policy = LOCAL_POLICIES[policyId] ?? {
+          id: policyId,
+          name: policyId,
+          description: "Policy not found. Check the policy ID or switch to remote mode.",
+          mode: getMode(),
+          rules: [],
+        };
+      }
+
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify(policy, null, 2),
+          },
+        ],
+      };
     },
   );
 
