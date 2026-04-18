@@ -1,24 +1,23 @@
 /**
  * Authorization engine — dispatches to a local rules engine or the hosted
- * AtlaSent API based on configuration.
+ * AtlaSent v2 API based on configuration.
  *
  * Mode selection (read on every call, so tests and hosts can toggle without
  * re-initializing the server):
  *
  *   ATLASENT_MODE=remote            → hosted AtlaSent API
- *   ATLASENT_MODE=local             → local rules engine
+ *   ATLASENT_MODE=local             → local rules engine (offline fallback)
  *   (unset)                         → remote if ATLASENT_API_KEY and
- *                                      ATLASENT_BASE_URL are set, else local
+ *                                      ATLASENT_API_URL are set, else local
  *
- * The hosted backend is a configuration swap, not a rewrite: every tool
- * handler calls `authorize(ctx)` and gets back the same Decision shape.
+ * Breaking change from v1: env var is now ATLASENT_API_URL (was ATLASENT_BASE_URL).
  */
 
 import type { ActionContext, Decision, VerifyResult } from "./decision.js";
 import { denyDecision } from "./decision.js";
 import { authorizeLocal, verifyLocal } from "./localEngine.js";
 
-const VERSION = "1.0.0";
+const VERSION = "2.0.0";
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export type Mode = "local" | "remote";
@@ -27,7 +26,7 @@ export function getMode(): Mode {
   const explicit = process.env.ATLASENT_MODE?.toLowerCase();
   if (explicit === "remote") return "remote";
   if (explicit === "local") return "local";
-  if (process.env.ATLASENT_API_KEY && process.env.ATLASENT_BASE_URL) return "remote";
+  if (process.env.ATLASENT_API_KEY && process.env.ATLASENT_API_URL) return "remote";
   return "local";
 }
 
@@ -52,7 +51,7 @@ export async function verify(token: string, ctx: ActionContext): Promise<VerifyR
 }
 
 // ---------------------------------------------------------------------------
-// Remote (hosted AtlaSent backend)
+// Remote (hosted AtlaSent v2 backend)
 // ---------------------------------------------------------------------------
 
 function buildHeaders(): Record<string, string> {
@@ -62,14 +61,12 @@ function buildHeaders(): Record<string, string> {
     "User-Agent": `@atlasent/mcp-server/${VERSION}`,
   };
   const key = process.env.ATLASENT_API_KEY;
-  if (key) headers["Authorization"] = `Bearer ${key}`;
-  const anon = process.env.ATLASENT_ANON_KEY;
-  if (anon) headers["x-anon-key"] = anon;
+  if (key) headers["X-AtlaSent-Key"] = key;
   return headers;
 }
 
 function baseUrl(): string {
-  return (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.com").replace(/\/+$/, "");
+  return (process.env.ATLASENT_API_URL ?? "https://api.atlasent.com").replace(/\/+$/, "");
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -88,77 +85,76 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 interface RawEvaluate {
   decision: string;
-  permit_token?: string;
+  permitId?: string;
+  risk?: { level: string; score: number };
+  id?: string;
   reason?: string;
-  audit_id?: string;
   conditions?: string[];
-  hold_id?: string;
 }
 
 async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   const body: Record<string, unknown> = {
-    action_type: ctx.action_type,
-    actor_id: ctx.actor_id,
-    environment: ctx.environment,
+    actor: { id: ctx.actor_id, type: "service" },
+    action: { type: ctx.action_type },
+    target: { environment: ctx.environment },
   };
   if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
   if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
 
-  const data = await post<RawEvaluate>("/v1-evaluate", body);
+  const data = await post<RawEvaluate>("/v1/evaluate", body);
 
   if (data.decision === "allow") {
-    if (!data.permit_token) throw new Error("Remote allowed the action but returned no permit_token");
-    const out: Decision = { decision: "allow", permit_token: data.permit_token };
-    if (data.audit_id) out.audit_id = data.audit_id;
+    if (!data.permitId) throw new Error("Remote allowed the action but returned no permitId");
+    const out: Decision = { decision: "allow", permit_token: data.permitId };
+    if (data.id) out.audit_id = data.id;
     if (data.conditions?.length) out.conditions = data.conditions;
     return out;
   }
 
-  if (data.decision === "hold" || data.decision === "escalate") {
+  if (data.decision === "require_approval") {
     return {
       decision: "hold",
       reason: data.reason ?? "Held for human review",
-      ...(data.hold_id && { hold_id: data.hold_id }),
-      ...(data.audit_id && { audit_id: data.audit_id }),
+      ...(data.id && { audit_id: data.id }),
     };
   }
 
-  // Anything else (including "deny" or an unknown decision) is fail-closed.
   return {
     decision: "deny",
     reason: data.reason ?? `Denied (decision=${data.decision})`,
-    ...(data.audit_id && { audit_id: data.audit_id }),
+    ...(data.id && { audit_id: data.id }),
   };
 }
 
 interface RawVerify {
-  outcome: string;
+  status: string;
   valid: boolean;
   reason?: string;
-  audit_id?: string;
+  evaluationId?: string;
 }
 
-async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyResult> {
-  const body: Record<string, unknown> = {
-    permit_token: token,
-    action_type: ctx.action_type,
-    actor_id: ctx.actor_id,
-    environment: ctx.environment,
-  };
-  if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
-  if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
-
-  const data = await post<RawVerify>("/v1-verify-permit", body);
+async function verifyRemote(permitId: string, _ctx: ActionContext): Promise<VerifyResult> {
+  // v2: permit ID is in the path; no body needed
+  const res = await fetch(`${baseUrl()}/v1/permits/${encodeURIComponent(permitId)}/verify`, {
+    method: "POST",
+    headers: buildHeaders(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`AtlaSent API ${res.status}: ${text}`);
+  }
+  const data = (await res.json()) as RawVerify;
 
   const outcome =
-    data.outcome === "verified" || data.outcome === "expired" || data.outcome === "invalid"
-      ? data.outcome
+    data.status === "verified" || data.status === "expired" || data.status === "invalid"
+      ? data.status
       : "error";
 
   return {
     outcome,
     valid: data.valid === true,
     ...(data.reason && { reason: data.reason }),
-    ...(data.audit_id && { audit_id: data.audit_id }),
+    ...(data.evaluationId && { audit_id: data.evaluationId }),
   };
 }
