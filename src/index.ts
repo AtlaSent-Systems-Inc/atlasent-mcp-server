@@ -3,13 +3,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, apiRequest } from './config.js';
 
-const config = loadConfig();
-
-const server = new Server(
-  { name: 'atlasent-mcp-server', version: '2.0.0' },
-  { capabilities: { tools: {} } }
-);
-
 const tools = [
   {
     name: 'evaluate_action',
@@ -91,80 +84,94 @@ const tools = [
   },
 ];
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+async function main() {
+  const config = loadConfig();
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  const a = (args ?? {}) as Record<string, unknown>;
+  const server = new Server(
+    { name: 'atlasent-mcp-server', version: '2.0.0' },
+    { capabilities: { tools: {} } }
+  );
 
-  try {
-    let result: unknown;
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
-    switch (name) {
-      case 'evaluate_action':
-        result = await apiRequest(config, '/v1/evaluate', {
-          method: 'POST',
-          body: JSON.stringify({
-            actor: { id: a.actor_id, type: a.actor_type ?? 'agent' },
-            action: { id: crypto.randomUUID(), type: a.action_type },
-            target: { id: a.target_id, type: a.target_type ?? 'resource', environment: a.environment ?? 'production' },
-          }),
-        });
-        break;
-      case 'get_session':
-        result = await apiRequest(config, '/v1/session');
-        break;
-      case 'list_audit_events': {
-        const p = new URLSearchParams();
-        if (a.limit) p.set('limit', String(a.limit));
-        if (a.type) p.set('type', String(a.type));
-        if (a.actor_id) p.set('actor_id', String(a.actor_id));
-        if (a.from) p.set('from', String(a.from));
-        if (a.to) p.set('to', String(a.to));
-        result = await apiRequest(config, `/v1/audit/events?${p}`);
-        break;
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    const a = (args ?? {}) as Record<string, unknown>;
+
+    try {
+      let result: unknown;
+
+      switch (name) {
+        case 'evaluate_action':
+          result = await apiRequest(config, '/v1/evaluate', {
+            method: 'POST',
+            body: JSON.stringify({
+              actor: { id: a.actor_id, type: a.actor_type ?? 'agent' },
+              action: { id: crypto.randomUUID(), type: a.action_type },
+              target: { id: a.target_id, type: a.target_type ?? 'resource', environment: a.environment ?? 'production' },
+            }),
+          });
+          break;
+        case 'get_session':
+          result = await apiRequest(config, '/v1/session');
+          break;
+        case 'list_audit_events': {
+          const p = new URLSearchParams();
+          if (a.limit) p.set('limit', String(a.limit));
+          if (a.type) p.set('type', String(a.type));
+          if (a.actor_id) p.set('actor_id', String(a.actor_id));
+          if (a.from) p.set('from', String(a.from));
+          if (a.to) p.set('to', String(a.to));
+          result = await apiRequest(config, `/v1/audit/events?${p}`);
+          break;
+        }
+        case 'list_policies': {
+          const p = new URLSearchParams();
+          if (a.status) p.set('status', String(a.status));
+          result = await apiRequest(config, `/v1/policies?${p}`);
+          break;
+        }
+        case 'get_policy':
+          result = await apiRequest(config, `/v1/policies/${a.id}`);
+          break;
+        case 'list_approvals': {
+          const p = new URLSearchParams();
+          if (a.status) p.set('status', String(a.status));
+          result = await apiRequest(config, `/v1/approvals?${p}`);
+          break;
+        }
+        case 'resolve_approval':
+          result = await apiRequest(config, `/v1/approvals/${a.id}/resolve`, {
+            method: 'POST',
+            body: JSON.stringify({ approved: a.approved, reviewNote: a.review_note }),
+          });
+          break;
+        case 'verify_permit':
+          result = await apiRequest(config, `/v1/permits/${a.permit_id}/verify`, { method: 'POST' });
+          break;
+        case 'consume_permit':
+          result = await apiRequest(config, `/v1/permits/${a.permit_id}/consume`, { method: 'POST' });
+          break;
+        case 'get_report': {
+          const p = new URLSearchParams({ days: String(a.days ?? 7) });
+          result = await apiRequest(config, `/v1/reports?${p}`);
+          break;
+        }
+        default:
+          return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
       }
-      case 'list_policies': {
-        const p = new URLSearchParams();
-        if (a.status) p.set('status', String(a.status));
-        result = await apiRequest(config, `/v1/policies?${p}`);
-        break;
-      }
-      case 'get_policy':
-        result = await apiRequest(config, `/v1/policies/${a.id}`);
-        break;
-      case 'list_approvals': {
-        const p = new URLSearchParams();
-        if (a.status) p.set('status', String(a.status));
-        result = await apiRequest(config, `/v1/approvals?${p}`);
-        break;
-      }
-      case 'resolve_approval':
-        result = await apiRequest(config, `/v1/approvals/${a.id}/resolve`, {
-          method: 'POST',
-          body: JSON.stringify({ approved: a.approved, reviewNote: a.review_note }),
-        });
-        break;
-      case 'verify_permit':
-        result = await apiRequest(config, `/v1/permits/${a.permit_id}/verify`, { method: 'POST' });
-        break;
-      case 'consume_permit':
-        result = await apiRequest(config, `/v1/permits/${a.permit_id}/consume`, { method: 'POST' });
-        break;
-      case 'get_report': {
-        const p = new URLSearchParams({ days: String(a.days ?? 7) });
-        result = await apiRequest(config, `/v1/reports?${p}`);
-        break;
-      }
-      default:
-        return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
+
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (e: unknown) {
+      return { content: [{ type: 'text' as const, text: `Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
     }
+  });
 
-    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-  } catch (e: unknown) {
-    return { content: [{ type: 'text' as const, text: `Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
-  }
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch((err) => {
+  process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(1);
 });
-
-const transport = new StdioServerTransport();
-await server.connect(transport);
