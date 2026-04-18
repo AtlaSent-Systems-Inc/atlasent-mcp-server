@@ -18,21 +18,23 @@ import { authorize, verify, getMode } from "./engine.js";
 
 export const VERSION = "1.0.0";
 
-const actionType = z.string().describe(
-  "The action the agent is about to perform (e.g. deploy, delete, merge, execute_query, send_email)."
-);
-const actorId = z.string().describe(
-  "Identifier for the user or service account the agent is acting on behalf of."
-);
-const environment = z.string().describe(
-  "Target environment for the action (e.g. production, staging, development)."
-);
-const approvals = z.array(z.string()).optional().describe(
-  "Approval identifiers already obtained for this action (e.g. ticket IDs, reviewer handles)."
-);
-const changeWindow = z.string().optional().describe(
-  "ISO-8601 time window during which the change is permitted (e.g. 2025-01-15T02:00:00Z/PT4H)."
-);
+const actionType = z
+  .string()
+  .meta({ description: "The action the agent is about to perform (e.g. deploy, delete, merge, execute_query, send_email)." });
+const actorId = z
+  .string()
+  .meta({ description: "Identifier for the user or service account the agent is acting on behalf of." });
+const environment = z
+  .string()
+  .meta({ description: "Target environment for the action (e.g. production, staging, development)." });
+const approvals = z
+  .array(z.string())
+  .optional()
+  .meta({ description: "Approval identifiers already obtained for this action (e.g. ticket IDs, reviewer handles)." });
+const changeWindow = z
+  .string()
+  .optional()
+  .meta({ description: "ISO-8601 time window during which the change is permitted (e.g. 2025-01-15T02:00:00Z/PT4H)." });
 
 function log(event: string, data: Record<string, unknown>): void {
   // Log to stderr so we don't interfere with MCP stdio messaging.
@@ -57,13 +59,13 @@ export function createServer(): McpServer {
         "Call this BEFORE performing any sensitive action. Returns a Decision: " +
         "`allow` (use the permit_token and proceed), `deny` (you MUST NOT proceed), " +
         "or `hold` (action is queued for human review — do not proceed, inform the user).",
-      inputSchema: {
+      inputSchema: z.object({
         action_type: actionType,
         actor_id: actorId,
         environment,
         approvals,
         change_window: changeWindow,
-      },
+      }),
       annotations: {
         title: "AtlaSent — Evaluate Action",
         readOnlyHint: true,
@@ -97,14 +99,14 @@ export function createServer(): McpServer {
         "issued by `evaluate` is still valid. Outcome is `verified`, `expired`, " +
         "`invalid`, or `error`. If `valid` is false, the action should be flagged " +
         "for review.",
-      inputSchema: {
-        permit_token: z.string().describe("The permit_token returned by a prior evaluate call."),
+      inputSchema: z.object({
+        permit_token: z.string().meta({ description: "The permit_token returned by a prior evaluate call." }),
         action_type: actionType,
         actor_id: actorId,
         environment,
         approvals,
         change_window: changeWindow,
-      },
+      }),
       annotations: {
         title: "AtlaSent — Verify Permit",
         readOnlyHint: true,
@@ -147,13 +149,13 @@ export function createServer(): McpServer {
         "Example protected tool. Every call is authorized by AtlaSent BEFORE the " +
         "deploy runs. Denied or held calls are blocked and never touch the target " +
         "system. On allow, the deploy executes and a permit_token is returned.",
-      inputSchema: {
-        service_name: z.string().describe("Name of the service to deploy."),
+      inputSchema: z.object({
+        service_name: z.string().meta({ description: "Name of the service to deploy." }),
         environment,
         actor_id: actorId,
         approvals,
         change_window: changeWindow,
-      },
+      }),
       annotations: {
         title: "Demo: Deploy Service",
         readOnlyHint: false,

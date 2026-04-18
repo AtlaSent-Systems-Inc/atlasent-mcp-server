@@ -7,7 +7,8 @@
  * policy that mirrors the local engine's decision logic.
  */
 
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getMode } from "./engine.js";
 
 // ---------------------------------------------------------------------------
@@ -108,7 +109,7 @@ export function registerPolicyResources(server: McpServer): void {
       title: "AtlaSent Policy",
       description:
         "Fetch the JSON representation of an AtlaSent authorization policy by id. " +
-        "Use \"default\" to retrieve the active policy.",
+        'Use "default" to retrieve the active policy.',
     },
     async (uri, variables) => {
       const policyId =
