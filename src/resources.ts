@@ -7,8 +7,7 @@
  * policy that mirrors the local engine's decision logic.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getMode } from "./engine.js";
 
 // ---------------------------------------------------------------------------
