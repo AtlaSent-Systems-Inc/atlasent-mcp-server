@@ -1,0 +1,40 @@
+{
+  "_comment": "Claude Desktop MCP server configuration for @atlasent/mcp-server.",
+  "_docs": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server#readme",
+
+  "mcpServers": {
+    "atlasent-stdio": {
+      "_comment": "Recommended: stdio transport (no network exposure, works out of the box).",
+      "command": "npx",
+      "args": ["-y", "@atlasent/mcp-server"],
+      "env": {
+        "ATLASENT_API_KEY": "<your-atlasent-api-key>",
+        "ATLASENT_BASE_URL": "https://api.atlasent.com",
+        "ATLASENT_MODE": "remote"
+      }
+    },
+
+    "atlasent-stdio-local": {
+      "_comment": "Local mode — no API key required. Uses built-in rules engine for development.",
+      "command": "npx",
+      "args": ["-y", "@atlasent/mcp-server"],
+      "env": {
+        "ATLASENT_MODE": "local"
+      }
+    },
+
+    "atlasent-http": {
+      "_comment": "HTTP transport — start the server first: ATLASENT_TRANSPORT=http npx @atlasent/mcp-server",
+      "_note": "Claude Desktop does not yet natively proxy HTTP MCP servers; use a local proxy or the stdio transport above.",
+      "command": "npx",
+      "args": ["-y", "@atlasent/mcp-server"],
+      "env": {
+        "ATLASENT_TRANSPORT": "http",
+        "PORT": "3000",
+        "ATLASENT_API_KEY": "<your-atlasent-api-key>",
+        "ATLASENT_BASE_URL": "https://api.atlasent.com",
+        "ATLASENT_MODE": "remote"
+      }
+    }
+  }
+}
