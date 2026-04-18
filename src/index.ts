@@ -1,277 +1,170 @@
-#!/usr/bin/env node
-/**
- * AtlaSent MCP Server v2
- *
- * All tools proxy through the AtlaSent REST API.
- * Config via environment variables:
- *   ATLASENT_API_URL  — base URL (default: https://api.atlasent.io)
- *   ATLASENT_API_KEY  — org-scoped API key (required)
- *
- * Transport selection:
- *   ATLASENT_TRANSPORT=http  → HTTP/SSE transport
- *   (unset / anything else)  → stdio (default MCP transport)
- */
-
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
-import { AtlaSentApiClient } from './client.js';
-import { loadConfig } from './config.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { loadConfig, apiRequest } from './config.js';
 
-const VERSION = '2.0.0';
+const config = loadConfig();
 
-async function main(): Promise<void> {
-  const config = loadConfig();
-  const client = new AtlaSentApiClient(config.apiUrl, config.apiKey);
+const server = new Server(
+  { name: 'atlasent-mcp-server', version: '2.0.0' },
+  { capabilities: { tools: {} } }
+);
 
-  const server = new McpServer({
-    name: '@atlasent/mcp-server',
-    version: VERSION,
-  });
+const tools = [
+  {
+    name: 'evaluate_action',
+    description: 'Evaluate whether an action is allowed under active AtlaSent policies. Returns decision (allow/deny/require_approval), risk level, and permit ID.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        actor_id: { type: 'string', description: 'ID of the actor performing the action' },
+        actor_type: { type: 'string', enum: ['user', 'service', 'agent', 'system'], default: 'agent' },
+        action_type: { type: 'string', description: 'Type of action e.g. data:read, model:invoke, tool:execute' },
+        target_id: { type: 'string', description: 'ID of the resource being acted upon' },
+        target_type: { type: 'string', description: 'Type of target resource' },
+        environment: { type: 'string', enum: ['production', 'staging', 'development'], default: 'production' },
+      },
+      required: ['actor_id', 'action_type', 'target_id'],
+    },
+  },
+  {
+    name: 'get_session',
+    description: 'Get the current API key session details including permissions and role.',
+    inputSchema: { type: 'object' as const, properties: {} },
+  },
+  {
+    name: 'list_audit_events',
+    description: 'List audit events with optional filters.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        limit: { type: 'number', default: 20 },
+        type: { type: 'string' },
+        actor_id: { type: 'string' },
+        from: { type: 'string', description: 'ISO 8601 start date' },
+        to: { type: 'string', description: 'ISO 8601 end date' },
+      },
+    },
+  },
+  {
+    name: 'list_policies',
+    description: 'List all policies in the organization.',
+    inputSchema: { type: 'object' as const, properties: { status: { type: 'string', enum: ['draft', 'in_review', 'active', 'archived'] } } },
+  },
+  {
+    name: 'get_policy',
+    description: 'Get details of a specific policy including its rules.',
+    inputSchema: { type: 'object' as const, properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'list_approvals',
+    description: 'List approval requests, optionally filtered by status.',
+    inputSchema: { type: 'object' as const, properties: { status: { type: 'string', enum: ['pending', 'approved', 'rejected', 'expired'] } } },
+  },
+  {
+    name: 'resolve_approval',
+    description: 'Approve or reject a pending approval request.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'string' },
+        approved: { type: 'boolean' },
+        review_note: { type: 'string' },
+      },
+      required: ['id', 'approved'],
+    },
+  },
+  {
+    name: 'verify_permit',
+    description: 'Verify that a permit is still valid and active.',
+    inputSchema: { type: 'object' as const, properties: { permit_id: { type: 'string' } }, required: ['permit_id'] },
+  },
+  {
+    name: 'consume_permit',
+    description: 'Consume (use up) a permit, marking it as used.',
+    inputSchema: { type: 'object' as const, properties: { permit_id: { type: 'string' } }, required: ['permit_id'] },
+  },
+  {
+    name: 'get_report',
+    description: 'Get governance summary report for a time range.',
+    inputSchema: { type: 'object' as const, properties: { days: { type: 'number', default: 7 } } },
+  },
+];
 
-  // ---------------------------------------------------------------------------
-  // evaluate_action — POST /v1/evaluate
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'evaluate_action',
-    {
-      title: 'AtlaSent — Evaluate Action',
-      description:
-        'Evaluate an action request against AtlaSent policies. Returns a decision ' +
-        '(allow, deny, or require_approval) along with risk level and permit details.',
-      inputSchema: z.object({
-        action_id: z.string().describe('Action identifier to evaluate (e.g. ci.production-deploy)'),
-        environment: z.string().optional().default('production').describe('Target environment'),
-        actor_id: z.string().optional().describe('Actor identifier'),
-        context: z.record(z.unknown()).optional().describe('Additional context key-value pairs'),
-      }),
-    },
-    async (args) => {
-      const body = {
-        actor: { id: args.actor_id ?? 'unknown', type: 'user', org_id: '' },
-        action: { id: args.action_id },
-        environment: args.environment ?? 'production',
-        context: args.context ?? {},
-      };
-      const result = await client.call('/v1/evaluate', 'POST', body);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
-  // ---------------------------------------------------------------------------
-  // get_session — GET /v1/session
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'get_session',
-    {
-      title: 'AtlaSent — Get Session',
-      description: 'Retrieve the current API session details and org information.',
-      inputSchema: z.object({}),
-    },
-    async () => {
-      const result = await client.call('/v1/session');
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+  const a = (args ?? {}) as Record<string, unknown>;
 
-  // ---------------------------------------------------------------------------
-  // list_audit_events — GET /v1/audit/events
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'list_audit_events',
-    {
-      title: 'AtlaSent — List Audit Events',
-      description: 'List audit events for the organisation. Supports optional filtering.',
-      inputSchema: z.object({
-        limit: z.number().int().positive().optional().describe('Maximum number of events to return'),
-        offset: z.number().int().nonnegative().optional().describe('Pagination offset'),
-        actor_id: z.string().optional().describe('Filter by actor ID'),
-        action_id: z.string().optional().describe('Filter by action ID'),
-        environment: z.string().optional().describe('Filter by environment'),
-      }),
-    },
-    async (args) => {
-      const params = new URLSearchParams();
-      if (args.limit != null) params.set('limit', String(args.limit));
-      if (args.offset != null) params.set('offset', String(args.offset));
-      if (args.actor_id) params.set('actor_id', args.actor_id);
-      if (args.action_id) params.set('action_id', args.action_id);
-      if (args.environment) params.set('environment', args.environment);
-      const qs = params.toString();
-      const result = await client.call(`/v1/audit/events${qs ? `?${qs}` : ''}`);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
+  try {
+    let result: unknown;
 
-  // ---------------------------------------------------------------------------
-  // list_policies — GET /v1/policies
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'list_policies',
-    {
-      title: 'AtlaSent — List Policies',
-      description: 'List all policies defined for the organisation.',
-      inputSchema: z.object({
-        limit: z.number().int().positive().optional().describe('Maximum number of policies to return'),
-        offset: z.number().int().nonnegative().optional().describe('Pagination offset'),
-      }),
-    },
-    async (args) => {
-      const params = new URLSearchParams();
-      if (args.limit != null) params.set('limit', String(args.limit));
-      if (args.offset != null) params.set('offset', String(args.offset));
-      const qs = params.toString();
-      const result = await client.call(`/v1/policies${qs ? `?${qs}` : ''}`);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
+    switch (name) {
+      case 'evaluate_action':
+        result = await apiRequest(config, '/v1/evaluate', {
+          method: 'POST',
+          body: JSON.stringify({
+            actor: { id: a.actor_id, type: a.actor_type ?? 'agent' },
+            action: { id: crypto.randomUUID(), type: a.action_type },
+            target: { id: a.target_id, type: a.target_type ?? 'resource', environment: a.environment ?? 'production' },
+          }),
+        });
+        break;
+      case 'get_session':
+        result = await apiRequest(config, '/v1/session');
+        break;
+      case 'list_audit_events': {
+        const p = new URLSearchParams();
+        if (a.limit) p.set('limit', String(a.limit));
+        if (a.type) p.set('type', String(a.type));
+        if (a.actor_id) p.set('actor_id', String(a.actor_id));
+        if (a.from) p.set('from', String(a.from));
+        if (a.to) p.set('to', String(a.to));
+        result = await apiRequest(config, `/v1/audit/events?${p}`);
+        break;
+      }
+      case 'list_policies': {
+        const p = new URLSearchParams();
+        if (a.status) p.set('status', String(a.status));
+        result = await apiRequest(config, `/v1/policies?${p}`);
+        break;
+      }
+      case 'get_policy':
+        result = await apiRequest(config, `/v1/policies/${a.id}`);
+        break;
+      case 'list_approvals': {
+        const p = new URLSearchParams();
+        if (a.status) p.set('status', String(a.status));
+        result = await apiRequest(config, `/v1/approvals?${p}`);
+        break;
+      }
+      case 'resolve_approval':
+        result = await apiRequest(config, `/v1/approvals/${a.id}/resolve`, {
+          method: 'POST',
+          body: JSON.stringify({ approved: a.approved, reviewNote: a.review_note }),
+        });
+        break;
+      case 'verify_permit':
+        result = await apiRequest(config, `/v1/permits/${a.permit_id}/verify`, { method: 'POST' });
+        break;
+      case 'consume_permit':
+        result = await apiRequest(config, `/v1/permits/${a.permit_id}/consume`, { method: 'POST' });
+        break;
+      case 'get_report': {
+        const p = new URLSearchParams({ days: String(a.days ?? 7) });
+        result = await apiRequest(config, `/v1/reports?${p}`);
+        break;
+      }
+      default:
+        return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
+    }
 
-  // ---------------------------------------------------------------------------
-  // get_policy — GET /v1/policies/:id
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'get_policy',
-    {
-      title: 'AtlaSent — Get Policy',
-      description: 'Retrieve a single policy by ID.',
-      inputSchema: z.object({
-        id: z.string().describe('Policy ID'),
-      }),
-    },
-    async (args) => {
-      const result = await client.call(`/v1/policies/${encodeURIComponent(args.id)}`);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-
-  // ---------------------------------------------------------------------------
-  // create_policy — POST /v1/policies
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'create_policy',
-    {
-      title: 'AtlaSent — Create Policy',
-      description: 'Create a new policy. The policy is created in draft state.',
-      inputSchema: z.object({
-        name: z.string().describe('Human-readable policy name'),
-        description: z.string().optional().describe('Policy description'),
-        rules: z.array(z.record(z.unknown())).describe('Array of policy rule objects'),
-        action_ids: z.array(z.string()).optional().describe('Action IDs this policy applies to'),
-        environments: z.array(z.string()).optional().describe('Environments this policy applies to'),
-      }),
-    },
-    async (args) => {
-      const result = await client.call('/v1/policies', 'POST', args);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-
-  // ---------------------------------------------------------------------------
-  // publish_policy — POST /v1/policies/:id/publish
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'publish_policy',
-    {
-      title: 'AtlaSent — Publish Policy',
-      description: 'Publish a draft policy, making it active for evaluations.',
-      inputSchema: z.object({
-        id: z.string().describe('Policy ID to publish'),
-      }),
-    },
-    async (args) => {
-      const result = await client.call(`/v1/policies/${encodeURIComponent(args.id)}/publish`, 'POST');
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-
-  // ---------------------------------------------------------------------------
-  // list_approvals — GET /v1/approvals
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'list_approvals',
-    {
-      title: 'AtlaSent — List Approvals',
-      description: 'List pending and resolved approval requests.',
-      inputSchema: z.object({
-        status: z.enum(['pending', 'approved', 'rejected', 'expired']).optional().describe('Filter by approval status'),
-        limit: z.number().int().positive().optional().describe('Maximum number of approvals to return'),
-        offset: z.number().int().nonnegative().optional().describe('Pagination offset'),
-      }),
-    },
-    async (args) => {
-      const params = new URLSearchParams();
-      if (args.status) params.set('status', args.status);
-      if (args.limit != null) params.set('limit', String(args.limit));
-      if (args.offset != null) params.set('offset', String(args.offset));
-      const qs = params.toString();
-      const result = await client.call(`/v1/approvals${qs ? `?${qs}` : ''}`);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-
-  // ---------------------------------------------------------------------------
-  // resolve_approval — POST /v1/approvals/:id/resolve
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'resolve_approval',
-    {
-      title: 'AtlaSent — Resolve Approval',
-      description: 'Approve or reject a pending approval request.',
-      inputSchema: z.object({
-        id: z.string().describe('Approval request ID'),
-        resolution: z.enum(['approved', 'rejected']).describe('Resolution decision'),
-        comment: z.string().optional().describe('Optional comment explaining the resolution'),
-      }),
-    },
-    async (args) => {
-      const body = {
-        resolution: args.resolution,
-        ...(args.comment ? { comment: args.comment } : {}),
-      };
-      const result = await client.call(`/v1/approvals/${encodeURIComponent(args.id)}/resolve`, 'POST', body);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-
-  // ---------------------------------------------------------------------------
-  // request_override — POST /v1/overrides
-  // ---------------------------------------------------------------------------
-  server.registerTool(
-    'request_override',
-    {
-      title: 'AtlaSent — Request Override',
-      description:
-        'Request an override for a denied action. Creates an override request that ' +
-        'can be reviewed and approved by an authorised operator.',
-      inputSchema: z.object({
-        evaluation_id: z.string().describe('Evaluation ID of the denied action'),
-        justification: z.string().describe('Business justification for the override'),
-        requested_by: z.string().optional().describe('Identifier of the person requesting the override'),
-      }),
-    },
-    async (args) => {
-      const result = await client.call('/v1/overrides', 'POST', args);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-
-  // ---------------------------------------------------------------------------
-  // Start server
-  // ---------------------------------------------------------------------------
-  const transport = (process.env.ATLASENT_TRANSPORT ?? '').toLowerCase();
-
-  if (transport === 'http') {
-    // Dynamically import HTTP transport to keep stdio startup lean.
-    const { startHttpServer } = await import('./http-transport.js');
-    await startHttpServer(server);
-    await new Promise<void>(() => { /* intentionally never resolves */ });
-  } else {
-    const stdioTransport = new StdioServerTransport();
-    await server.connect(stdioTransport);
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+  } catch (e: unknown) {
+    return { content: [{ type: 'text' as const, text: `Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
   }
-}
-
-main().catch((err) => {
-  console.error('Fatal:', err);
-  process.exit(1);
 });
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
