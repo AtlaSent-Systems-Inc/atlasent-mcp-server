@@ -108,7 +108,7 @@ export function registerPolicyResources(server: McpServer): void {
       title: "AtlaSent Policy",
       description:
         "Fetch the JSON representation of an AtlaSent authorization policy by id. " +
-        "Use \"default\" to retrieve the active policy.",
+        'Use "default" to retrieve the active policy.',
     },
     async (uri, variables) => {
       const policyId =
