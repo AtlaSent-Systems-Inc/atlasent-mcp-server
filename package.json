@@ -1,7 +1,7 @@
 {
   "name": "@atlasent/mcp-server",
-  "version": "1.0.0",
-  "description": "Add AtlaSent governance to any MCP-compatible AI agent. Evaluate actions before execution, verify permits after — fail-closed by default.",
+  "version": "2.0.0",
+  "description": "MCP server for AtlaSent — proxy tools for evaluate, audit, policies, approvals, and overrides via the AtlaSent REST API.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -15,8 +15,6 @@
   "scripts": {
     "build": "tsc",
     "test": "node --test dist/server.test.js",
-    "test:integration": "node --test dist/integration.test.js",
-    "demo": "node examples/demo.mjs",
     "start": "node dist/index.js",
     "prepare": "tsc"
   },
@@ -42,9 +40,7 @@
     "ai-governance",
     "policy-evaluation",
     "claude",
-    "cursor",
-    "copilot",
-    "langchain"
+    "cursor"
   ],
   "author": "AtlaSent Systems Inc.",
   "license": "MIT",
