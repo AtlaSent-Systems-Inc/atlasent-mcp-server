@@ -28,11 +28,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/AtlaSent-Systems-Inc/mcp-server.git"
+    "url": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server.git"
   },
-  "homepage": "https://github.com/AtlaSent-Systems-Inc/mcp-server#readme",
+  "homepage": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server#readme",
   "bugs": {
-    "url": "https://github.com/AtlaSent-Systems-Inc/mcp-server/issues"
+    "url": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server/issues"
   },
   "keywords": [
     "mcp",
