@@ -9,8 +9,8 @@ Ships with a local rules engine so you can run the full evaluate → act → ver
 ## Run the demo in 60 seconds
 
 ```bash
-git clone https://github.com/AtlaSent-Systems-Inc/mcp-server.git
-cd mcp-server
+git clone https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server.git
+cd atlasent-mcp-server
 npm install
 npm run build
 npm run demo
