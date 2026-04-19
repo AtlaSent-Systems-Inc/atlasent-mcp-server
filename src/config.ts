@@ -14,9 +14,14 @@ export function loadConfig(): ServerConfig {
 }
 
 export async function apiRequest<T>(config: ServerConfig, path: string, init: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-AtlaSent-Key': config.apiKey,
+  };
+  if (config.orgId) headers['X-AtlaSent-Org'] = config.orgId;
   const res = await fetch(`${config.apiUrl.replace(/\/$/, '')}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', 'X-AtlaSent-Key': config.apiKey, ...init.headers },
+    headers: { ...headers, ...init.headers },
     signal: init.signal ?? AbortSignal.timeout(config.timeout ?? 10_000),
   });
   if (!res.ok) {

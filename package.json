@@ -2,15 +2,26 @@
   "name": "@atlasent/mcp-server",
   "version": "2.0.0",
   "description": "AtlaSent MCP server — Model Context Protocol tools for AI agents",
+  "keywords": ["mcp", "model-context-protocol", "atlasent", "governance", "ai-agents", "claude"],
+  "homepage": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server#readme",
+  "bugs": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server.git"
+  },
+  "author": "AtlaSent Systems, Inc.",
   "type": "module",
   "main": "./dist/index.js",
   "bin": { "atlasent-mcp": "./dist/index.js" },
   "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run build",
+    "test": "node --test tests/smoke.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.1"
