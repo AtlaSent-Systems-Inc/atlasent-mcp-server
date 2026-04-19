@@ -5,6 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": { "atlasent-mcp": "./dist/index.js" },
+  "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",

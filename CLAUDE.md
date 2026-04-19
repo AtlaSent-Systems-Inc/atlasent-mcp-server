@@ -1,83 +1,71 @@
 # @atlasent/mcp-server
 
-MCP server that enforces `authorize-before-execute` for any MCP-compatible AI agent.
+MCP server that exposes AtlaSent's REST API as Model Context Protocol tools for AI agents. Every tool is a thin proxy over an `atlasent-api` endpoint — no direct Supabase or other backend access.
 
 ## Architecture
 
 ```
 src/
-  decision.ts         — Decision / VerifyResult types + toolResult() MCP envelope helper
-  localEngine.ts      — Tiny rules engine used when no hosted backend is configured
-  engine.ts           — authorize() / verify(): dispatches to local or remote; fail-closed wrapper
-  server.ts           — createServer(): registers evaluate, verify_permit, deploy_service (demo)
-  index.ts            — CLI entry point; connects stdio transport
-  server.test.ts      — 22 unit tests: tools/list, evaluate (local + remote), verify_permit, deploy_service
-  integration.test.ts — Live-API tests; require ATLASENT_API_KEY + ATLASENT_BASE_URL, skip otherwise
+  index.ts    — CLI entry point; stdio transport; registers the 10 tools and dispatches each to the API
+  config.ts   — loadConfig() reads ATLASENT_API_URL + ATLASENT_API_KEY; apiRequest() is the shared fetch wrapper
+  client.ts   — AtlaSentApiClient: standalone client class (not used by index.ts, kept for external consumers)
+
+docs/
+  DESIGN_V2.md  — v1 → v2 migration notes (dropped Supabase, moved to API-only)
 
 examples/
-  demo.mjs            — End-to-end script: spawns server, drives evaluate → deploy → verify flow
-
-.github/workflows/
-  ci.yml              — build + test on push/PR, Node 18/20/22 matrix
-  integration.yml     — nightly integration tests against the hosted API
-  publish.yml         — npm publish --provenance on v* tag push
+  claude_desktop_config.json — MCP client config snippet for Claude Desktop
 ```
 
-## Interception point
+## Tools
 
-Every protected tool follows the same pattern. See `server.ts`, the `deploy_service` handler:
+All tools proxy to the AtlaSent API and return its JSON response verbatim. Errors are caught and returned as `isError: true` tool results.
 
-```ts
-const ctx: ActionContext = { action_type: "deploy", actor_id, environment, ... };
-const decision = await authorize(ctx);       // ← INTERCEPTION POINT
-if (decision.decision !== "allow") {
-  return toolResult(decision);                // blocked; nothing executes
-}
-const result = /* run the action */;
-return toolResult(decision, { result });
-```
+| Tool | Endpoint | Purpose |
+|------|----------|---------|
+| `evaluate_action` | `POST /v1/evaluate` | Decide whether an action is allowed |
+| `get_session` | `GET /v1/session` | Session details for the API key |
+| `list_audit_events` | `GET /v1/audit/events` | Audit log with optional filters |
+| `list_policies` | `GET /v1/policies` | Policies in the org |
+| `get_policy` | `GET /v1/policies/:id` | One policy with its rules |
+| `list_approvals` | `GET /v1/approvals` | Approval requests |
+| `resolve_approval` | `POST /v1/approvals/:id/resolve` | Approve/reject a request |
+| `verify_permit` | `POST /v1/permits/:id/verify` | Verify a permit is still valid |
+| `consume_permit` | `POST /v1/permits/:id/consume` | Mark a permit as used |
+| `get_report` | `GET /v1/reports` | Governance summary for a time range |
 
-The guarantee: if `authorize()` does not return `allow`, the action code never runs. This is the one invariant the demo proves.
+## Request contract
 
-## Mode dispatch
+`apiRequest(config, path, init)`:
 
-`engine.getMode()` is read on every call (so hosts can flip modes without restart):
+- Base URL: `config.apiUrl` (trailing slash stripped)
+- Auth header: `X-AtlaSent-Key: <config.apiKey>`
+- `Content-Type: application/json`
+- Errors: non-2xx responses throw `Error(\`${err.code ?? 'api_error'}: ${err.message ?? 'Request failed'} (${status})\`)`, which index.ts surfaces as an `isError` tool result.
 
-- `ATLASENT_MODE=remote` → hosted AtlaSent API
-- `ATLASENT_MODE=local` → in-process rules engine
-- Unset → `remote` if both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are set, else `local`
+## Config
 
-The hosted backend is a configuration swap. `authorizeRemote()` / `verifyRemote()` in `engine.ts` are the only adapters; everything above (tool handlers, tests, demo) is unchanged.
+Required env vars (`config.ts` throws on startup if missing):
 
-## Build, test, run
+- `ATLASENT_API_URL` — base URL of the AtlaSent API (e.g. `https://api.atlasent.io`)
+- `ATLASENT_API_KEY` — API key; sent as `X-AtlaSent-Key`
+
+Optional:
+
+- `ATLASENT_ORG_ID` — org scoping (passthrough)
+- `ATLASENT_TIMEOUT` — request timeout in ms (default 10_000); not yet wired into `apiRequest` — currently informational.
+
+## Build, run
 
 ```bash
 npm run build             # tsc → dist/
-npm test                  # 22 unit tests, no network
-npm run test:integration  # live API; needs ATLASENT_API_KEY + ATLASENT_BASE_URL
-npm run demo              # end-to-end demo in local mode
+npm run typecheck         # tsc --noEmit
+npm run dev               # tsx src/index.ts (requires env vars)
+npm start                 # node dist/index.js (requires env vars and a build)
 ```
 
-Tests use `node:test` + MCP SDK's `InMemoryTransport`. `globalThis.fetch` is mocked per-test in remote-mode tests; local-mode tests touch no network.
-
-## Key design decisions
-
-- **Fail-closed at every layer.** `authorize()` and `verify()` wrap everything in try/catch; any error → `{ decision: "deny" }` or `{ outcome: "error", valid: false }`.
-- **Env vars read at call time.** Let tests (and users) swap config without module reload.
-- **10s request timeout.** `AbortSignal.timeout()` on every fetch — a hung API must not block the agent.
-- **Normalized decision envelope.** One shape for `allow`/`deny`/`hold`, one shape for verification. Remote outputs are coerced into this shape (e.g. `escalate` → `hold`); unknown decisions collapse to `deny`.
-- **`isError` set only on failure.** MCP convention — hosts surface tool-call errors in their UI.
-- **Stderr structured logs.** Every authorize / execute / verify emits a JSON line to stderr. Doesn't interfere with stdio protocol on stdout.
-
-## API contracts
-
-Hosted backend:
-
-- `POST /v1-evaluate` → `{ decision, permit_token?, reason?, audit_id?, conditions?, hold_id? }`
-- `POST /v1-verify-permit` → `{ outcome, valid, reason?, audit_id? }`
-
-Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
+No test suite in v2. Previous v1 tests covered a different architecture (authorize/verify/hold) and were removed with the v1 code.
 
 ## npm publishing
 
-Scoped package `@atlasent/mcp-server`, `publishConfig.access: public`. Published tarball contents limited to `dist/`, `README.md`, `LICENSE` via the `files` field. Tag `v*` triggers `.github/workflows/publish.yml` which runs build, tests, and `npm publish --provenance` using the `NPM_TOKEN` repo secret.
+Scoped package `@atlasent/mcp-server@2.0.0`, ESM-only (`"type": "module"`). Only dependency: `@modelcontextprotocol/sdk`.
