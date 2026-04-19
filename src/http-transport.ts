@@ -18,6 +18,7 @@
 
 import http from "node:http";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -52,7 +53,7 @@ async function tryStreamableTransport(server: McpServer): Promise<http.Server | 
       sessionIdGenerator: () => randomUUID(),
     });
 
-    await server.connect(transport);
+    await server.connect(transport as unknown as Transport);
 
     const httpServer = http.createServer(async (req, res) => {
       const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);

@@ -91,7 +91,8 @@ async function fetchRemotePolicy(policyId: string): Promise<Record<string, unkno
  * Call this immediately after `createServer()` returns.
  */
 export function registerPolicyResources(server: McpServer): void {
-  server.registerResourceTemplate(
+  server.registerResource(
+    "atlasent-policy",
     new ResourceTemplate("atlasent://policies/{policyId}", {
       list: async () => ({
         resources: [
@@ -110,7 +111,7 @@ export function registerPolicyResources(server: McpServer): void {
         "Fetch the JSON representation of an AtlaSent authorization policy by id. " +
         'Use "default" to retrieve the active policy.',
     },
-    async (uri, variables) => {
+    async (uri: URL, variables: Record<string, string | string[]>) => {
       const policyId =
         typeof variables["policyId"] === "string" ? variables["policyId"] : "default";
 
