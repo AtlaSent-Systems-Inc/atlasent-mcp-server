@@ -2,6 +2,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { randomUUID } from 'node:crypto';
 import { loadConfig, apiRequest } from './config.js';
 
 const config = loadConfig();
@@ -107,7 +108,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           method: 'POST',
           body: JSON.stringify({
             actor: { id: a.actor_id, type: a.actor_type ?? 'agent' },
-            action: { id: crypto.randomUUID(), type: a.action_type },
+            action: { id: randomUUID(), type: a.action_type },
             target: { id: a.target_id, type: a.target_type ?? 'resource', environment: a.environment ?? 'production' },
           }),
         });

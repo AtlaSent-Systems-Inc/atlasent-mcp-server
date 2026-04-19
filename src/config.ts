@@ -17,10 +17,11 @@ export async function apiRequest<T>(config: ServerConfig, path: string, init: Re
   const res = await fetch(`${config.apiUrl.replace(/\/$/, '')}${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', 'X-AtlaSent-Key': config.apiKey, ...init.headers },
+    signal: init.signal ?? AbortSignal.timeout(config.timeout ?? 10_000),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }));
+    const err: { code?: string; message?: string } = await res.json().catch(() => ({ message: res.statusText }));
     throw new Error(`${err.code ?? 'api_error'}: ${err.message ?? 'Request failed'} (${res.status})`);
   }
-  return res.json();
+  return res.json() as Promise<T>;
 }
