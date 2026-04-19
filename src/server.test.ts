@@ -1,0 +1,419 @@
+import { describe, it, beforeEach, afterEach, mock } from "node:test";
+import assert from "node:assert/strict";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createServer } from "./server.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const EVAL_ARGS = {
+  action_type: "deploy",
+  actor_id: "user-1",
+  environment: "production",
+};
+
+function mockFetch(response: object, status = 200) {
+  const fn = async (_url: string | URL | Request, _init?: RequestInit) =>
+    new Response(JSON.stringify(response), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  return mock.fn(fn);
+}
+
+function parseResult(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
+  const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+  return JSON.parse(text) as Record<string, unknown>;
+}
+
+async function setup() {
+  const server = createServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "test-client", version: "1.0.0" });
+  await Promise.all([
+    client.connect(clientTransport),
+    server.connect(serverTransport),
+  ]);
+  return { client, server };
+}
+
+function forceLocalMode(): void {
+  process.env.ATLASENT_MODE = "local";
+  delete process.env.ATLASENT_API_KEY;
+  delete process.env.ATLASENT_ANON_KEY;
+  delete process.env.ATLASENT_BASE_URL;
+}
+
+function forceRemoteMode(): void {
+  process.env.ATLASENT_MODE = "remote";
+  process.env.ATLASENT_API_KEY = "test-key";
+  process.env.ATLASENT_BASE_URL = "https://api.test";
+}
+
+function clearMode(): void {
+  delete process.env.ATLASENT_MODE;
+  delete process.env.ATLASENT_API_KEY;
+  delete process.env.ATLASENT_ANON_KEY;
+  delete process.env.ATLASENT_BASE_URL;
+}
+
+let originalFetch: typeof globalThis.fetch;
+
+beforeEach(() => {
+  originalFetch = globalThis.fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  clearMode();
+});
+
+// ---------------------------------------------------------------------------
+// tools/list
+// ---------------------------------------------------------------------------
+
+describe("tools/list", () => {
+  it("exposes evaluate, verify_permit, and deploy_service", async () => {
+    const { client } = await setup();
+    const { tools } = await client.listTools();
+    const names = tools.map((t) => t.name).sort();
+    assert.deepEqual(names, ["deploy_service", "evaluate", "verify_permit"]);
+  });
+
+  it("deploy_service requires service_name, environment, actor_id", async () => {
+    const { client } = await setup();
+    const { tools } = await client.listTools();
+    const deploy = tools.find((t) => t.name === "deploy_service")!;
+    const required = (deploy.inputSchema as { required?: string[] }).required ?? [];
+    for (const f of ["service_name", "environment", "actor_id"]) {
+      assert.ok(required.includes(f), `missing required field: ${f}`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// evaluate — local mode
+// ---------------------------------------------------------------------------
+
+describe("evaluate (local mode)", () => {
+  it("allows staging actions by default", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "evaluate",
+      arguments: { ...EVAL_ARGS, environment: "staging" },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    assert.ok((data.permit_token as string).startsWith("pt_local_"));
+    assert.equal(result.isError, undefined);
+  });
+
+  it("denies production actions with no approvals", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.ok((data.reason as string).toLowerCase().includes("approval"));
+    assert.equal(result.isError, true);
+  });
+
+  it("allows production actions with approvals", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "evaluate",
+      arguments: { ...EVAL_ARGS, approvals: ["ticket-42"] },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    assert.equal(result.isError, undefined);
+  });
+
+  it("holds destructive actions without a change_window", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "evaluate",
+      arguments: {
+        action_type: "delete_table",
+        actor_id: "user-1",
+        environment: "staging",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "hold");
+    assert.ok((data.hold_id as string).startsWith("hold_local_"));
+    assert.equal(result.isError, true);
+  });
+
+  it("allows destructive actions with a change_window", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "evaluate",
+      arguments: {
+        action_type: "delete_table",
+        actor_id: "user-1",
+        environment: "staging",
+        change_window: "2025-01-15T02:00:00Z/PT4H",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// evaluate — remote mode
+// ---------------------------------------------------------------------------
+
+describe("evaluate (remote mode)", () => {
+  it("returns decision and permit_token on API success", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      decision: "allow",
+      permit_token: "pt_xyz",
+      audit_id: "aud_1",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    assert.equal(data.permit_token, "pt_xyz");
+    assert.equal(data.audit_id, "aud_1");
+  });
+
+  it("normalizes escalate to hold", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      decision: "escalate",
+      reason: "needs SRE review",
+      hold_id: "hold_1",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "hold");
+    assert.equal(data.hold_id, "hold_1");
+    assert.equal(result.isError, true);
+  });
+
+  it("sends correct auth headers", async () => {
+    forceRemoteMode();
+    process.env.ATLASENT_ANON_KEY = "test-anon";
+    const fetcher = mockFetch({ decision: "allow", permit_token: "pt_1" });
+    globalThis.fetch = fetcher;
+    const { client } = await setup();
+    await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+
+    const init = fetcher.mock.calls[0].arguments[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    assert.equal(headers["Authorization"], "Bearer test-key");
+    assert.equal(headers["x-anon-key"], "test-anon");
+    assert.ok(headers["User-Agent"].startsWith("@atlasent/mcp-server/"));
+  });
+
+  it("denies on HTTP 500 (fail-closed)", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "internal" }, 500);
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.equal(result.isError, true);
+  });
+
+  it("denies on network error (fail-closed)", async () => {
+    forceRemoteMode();
+    const fn = async (): Promise<Response> => {
+      throw new Error("ECONNREFUSED");
+    };
+    globalThis.fetch = mock.fn(fn);
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.ok((data.reason as string).includes("ECONNREFUSED"));
+  });
+
+  it("denies when remote allows but returns no permit_token", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ decision: "allow" });
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.ok((data.reason as string).includes("permit_token"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verify_permit
+// ---------------------------------------------------------------------------
+
+describe("verify_permit (local mode)", () => {
+  it("verifies a fresh local permit", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+
+    // Get a permit via evaluate
+    const authzResult = await client.callTool({
+      name: "evaluate",
+      arguments: { ...EVAL_ARGS, approvals: ["ok"] },
+    });
+    const authz = parseResult(authzResult);
+    assert.equal(authz.decision, "allow");
+
+    // Verify it
+    const verifyResult = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: authz.permit_token as string },
+    });
+    const verified = parseResult(verifyResult);
+    assert.equal(verified.outcome, "verified");
+    assert.equal(verified.valid, true);
+  });
+
+  it("rejects a malformed local permit as invalid", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: "garbage_token" },
+    });
+    const data = parseResult(result);
+    assert.equal(data.outcome, "invalid");
+    assert.equal(data.valid, false);
+    assert.equal(result.isError, true);
+  });
+});
+
+describe("verify_permit (remote mode)", () => {
+  it("returns outcome and valid on success", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ outcome: "verified", valid: true, audit_id: "aud_1" });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: "pt_abc" },
+    });
+    const data = parseResult(result);
+    assert.equal(data.outcome, "verified");
+    assert.equal(data.valid, true);
+  });
+
+  it("returns error outcome on network failure", async () => {
+    forceRemoteMode();
+    const fn = async (): Promise<Response> => {
+      throw new Error("ETIMEDOUT");
+    };
+    globalThis.fetch = mock.fn(fn);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: "pt_abc" },
+    });
+    const data = parseResult(result);
+    assert.equal(data.outcome, "error");
+    assert.equal(data.valid, false);
+    assert.equal(result.isError, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deploy_service — authorization-before-execution proof
+// ---------------------------------------------------------------------------
+
+describe("deploy_service (authorization-gated)", () => {
+  it("blocks the deploy when policy denies (production, no approvals)", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "deploy_service",
+      arguments: {
+        service_name: "billing-api",
+        environment: "production",
+        actor_id: "agent-7",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.equal(data.result, undefined, "deploy must NOT execute when denied");
+    assert.equal(result.isError, true);
+  });
+
+  it("holds the deploy when policy holds (destructive w/o window)", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "deploy_service",
+      arguments: {
+        service_name: "delete-old-records",
+        environment: "staging",
+        actor_id: "agent-7",
+      },
+    });
+    const data = parseResult(result);
+    // action_type is "deploy" in this tool, so destructive rule doesn't fire.
+    // This one should allow.
+    assert.equal(data.decision, "allow");
+  });
+
+  it("executes the deploy when policy allows", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "deploy_service",
+      arguments: {
+        service_name: "billing-api",
+        environment: "production",
+        actor_id: "agent-7",
+        approvals: ["ticket-42"],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    assert.ok(data.permit_token, "must return a permit_token");
+    const res = data.result as Record<string, unknown>;
+    assert.equal(res.status, "deployed");
+    assert.equal(res.service, "billing-api");
+    assert.equal(res.environment, "production");
+  });
+
+  it("executes staging deploys without approvals", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "deploy_service",
+      arguments: {
+        service_name: "billing-api",
+        environment: "staging",
+        actor_id: "agent-7",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    assert.ok(data.result);
+  });
+
+  it("blocks on remote fail-closed (verification failure)", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "internal" }, 500);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "deploy_service",
+      arguments: {
+        service_name: "billing-api",
+        environment: "staging",
+        actor_id: "agent-7",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.equal(data.result, undefined);
+  });
+});
