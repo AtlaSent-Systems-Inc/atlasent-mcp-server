@@ -6,16 +6,19 @@ MCP server that enforces `authorize-before-execute` for any MCP-compatible AI ag
 
 ```
 src/
-  decision.ts         — Decision / VerifyResult types + toolResult() MCP envelope helper
+  decision.ts         — ActionContext / Decision / VerifyResult types + toolResult / toolError MCP envelopes
   localEngine.ts      — Tiny rules engine used when no hosted backend is configured
   engine.ts           — authorize() / verify(): dispatches to local or remote; fail-closed wrapper
-  server.ts           — createServer(): registers evaluate, verify_permit, deploy_service (demo)
-  index.ts            — CLI entry point; connects stdio transport
-  server.test.ts      — 22 unit tests: tools/list, evaluate (local + remote), verify_permit, deploy_service
+  server.ts           — createServer(): registers evaluate, verify_permit, and the four gated demo tools
+  index.ts            — CLI entry point; connects createServer() to stdio (or HTTP) transport
+  resources.ts        — MCP resource template for atlasent://policies/{id}
+  http-transport.ts   — Optional HTTP transport, enabled by ATLASENT_TRANSPORT=http
+  server.test.ts      — Unit tests: tools/list, envelope banners, evaluate (local + remote), verify_permit,
+                        send_email, access_sensitive_dataset, write_to_production, deploy_service
   integration.test.ts — Live-API tests; require ATLASENT_API_KEY + ATLASENT_BASE_URL, skip otherwise
 
 examples/
-  demo.mjs            — End-to-end script: spawns server, drives evaluate → deploy → verify flow
+  demo.mjs            — End-to-end script: walks through block + allow for each gated demo tool
 
 .github/workflows/
   ci.yml              — build + test on push/PR, Node 18/20/22 matrix
@@ -23,12 +26,27 @@ examples/
   publish.yml         — npm publish --provenance on v* tag push
 ```
 
+## Tool set
+
+Primitives (for self-gating agents):
+- `evaluate` — returns a Decision
+- `verify_permit` — closes the audit loop
+
+Gated demo tools (each runs `authorize()` before executing):
+- `send_email` — blocks external recipients without an approval
+- `access_sensitive_dataset` — blocks PII / PHI reads without an approval
+- `write_to_production` — blocks prod writes without an approval
+- `deploy_service` — original demo tool; blocks prod deploys without an approval
+
 ## Interception point
 
-Every protected tool follows the same pattern. See `server.ts`, the `deploy_service` handler:
+Every protected tool follows the same pattern. See any of the gated handlers in `server.ts`:
 
 ```ts
-const ctx: ActionContext = { action_type: "deploy", actor_id, environment, ... };
+const ctx: ActionContext = {
+  action_type, actor_id, environment, approvals,
+  context: { /* tool-specific attributes the policy may inspect */ },
+};
 const decision = await authorize(ctx);       // ← INTERCEPTION POINT
 if (decision.decision !== "allow") {
   return toolResult(decision);                // blocked; nothing executes
@@ -37,7 +55,7 @@ const result = /* run the action */;
 return toolResult(decision, { result });
 ```
 
-The guarantee: if `authorize()` does not return `allow`, the action code never runs. This is the one invariant the demo proves.
+The guarantee: if `authorize()` does not return `allow`, the action code never runs. This is the one invariant the demo proves. A separate `toolError()` envelope is used when the action was authorized but crashed mid-execution, so blocked-by-authorization stays distinguishable from tool-ran-and-failed.
 
 ## Mode dispatch
 
@@ -53,7 +71,7 @@ The hosted backend is a configuration swap. `authorizeRemote()` / `verifyRemote(
 
 ```bash
 npm run build             # tsc → dist/
-npm test                  # 22 unit tests, no network
+npm test                  # unit tests, no network
 npm run test:integration  # live API; needs ATLASENT_API_KEY + ATLASENT_BASE_URL
 npm run demo              # end-to-end demo in local mode
 ```

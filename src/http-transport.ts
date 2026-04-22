@@ -52,7 +52,10 @@ async function tryStreamableTransport(server: McpServer): Promise<http.Server | 
       sessionIdGenerator: () => randomUUID(),
     });
 
-    await server.connect(transport);
+    // The SDK's Transport interface has optional start/send methods at runtime
+    // but the structural type we constructed above doesn't advertise them.
+    // Cast through unknown — the MCP server only calls the declared methods.
+    await server.connect(transport as unknown as Parameters<typeof server.connect>[0]);
 
     const httpServer = http.createServer(async (req, res) => {
       const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);

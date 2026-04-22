@@ -1,23 +1,41 @@
 {
   "name": "@atlasent/mcp-server",
   "version": "2.0.0",
-  "description": "AtlaSent MCP server — Model Context Protocol tools for AI agents",
+  "description": "AtlaSent MCP server — authorization-before-execution for AI agent tool calls",
   "type": "module",
   "main": "./dist/index.js",
-  "bin": { "atlasent-mcp": "./dist/index.js" },
+  "bin": {
+    "atlasent-mcp": "./dist/index.js",
+    "atlasent-mcp-server": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node --test --test-reporter=spec dist/server.test.js",
+    "test:integration": "tsc && node --test --test-reporter=spec dist/integration.test.js",
+    "demo": "npm run build && node examples/demo.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.10.1"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "typescript": "^5.4.5",
     "@types/node": "^20.12.7",
-    "tsx": "^4.7.3"
+    "tsx": "^4.7.3",
+    "typescript": "^5.4.5"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "license": "MIT"
 }

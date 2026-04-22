@@ -23,9 +23,19 @@ function mockFetch(response: object, status = 200) {
   return mock.fn(fn);
 }
 
+/**
+ * Tool results carry two content blocks: a human-readable banner and a
+ * structured JSON payload. Parse the payload from the last block.
+ */
 function parseResult(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
-  const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+  const blocks = result.content as Array<{ type: string; text: string }>;
+  const text = blocks[blocks.length - 1]?.text ?? "{}";
   return JSON.parse(text) as Record<string, unknown>;
+}
+
+function banner(result: Awaited<ReturnType<Client["callTool"]>>): string {
+  const blocks = result.content as Array<{ type: string; text: string }>;
+  return blocks[0]?.text ?? "";
 }
 
 async function setup() {
@@ -75,11 +85,18 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("tools/list", () => {
-  it("exposes evaluate, verify_permit, and deploy_service", async () => {
+  it("exposes all AtlaSent primitives + protected demo tools", async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["deploy_service", "evaluate", "verify_permit"]);
+    assert.deepEqual(names, [
+      "access_sensitive_dataset",
+      "deploy_service",
+      "evaluate",
+      "send_email",
+      "verify_permit",
+      "write_to_production",
+    ]);
   });
 
   it("deploy_service requires service_name, environment, actor_id", async () => {
@@ -90,6 +107,56 @@ describe("tools/list", () => {
     for (const f of ["service_name", "environment", "actor_id"]) {
       assert.ok(required.includes(f), `missing required field: ${f}`);
     }
+  });
+
+  it("send_email requires to, subject, body, actor_id", async () => {
+    const { client } = await setup();
+    const { tools } = await client.listTools();
+    const t = tools.find((t) => t.name === "send_email")!;
+    const required = (t.inputSchema as { required?: string[] }).required ?? [];
+    for (const f of ["to", "subject", "body", "actor_id"]) {
+      assert.ok(required.includes(f), `missing required field: ${f}`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Envelope — banner + JSON
+// ---------------------------------------------------------------------------
+
+describe("tool result envelope", () => {
+  it("emits a [BLOCKED BY ATLASENT] banner on deny", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    assert.ok(banner(result).startsWith("[BLOCKED BY ATLASENT]"));
+    assert.equal(result.isError, true);
+  });
+
+  it("emits a [ALLOWED BY ATLASENT] banner on allow", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "evaluate",
+      arguments: { ...EVAL_ARGS, approvals: ["ok"] },
+    });
+    assert.ok(banner(result).startsWith("[ALLOWED BY ATLASENT]"));
+    assert.equal(result.isError, undefined);
+  });
+
+  it("emits a [HELD BY ATLASENT] banner on hold", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "evaluate",
+      arguments: {
+        action_type: "delete_table",
+        actor_id: "user-1",
+        environment: "staging",
+      },
+    });
+    assert.ok(banner(result).startsWith("[HELD BY ATLASENT]"));
+    assert.equal(result.isError, true);
   });
 });
 
@@ -165,6 +232,40 @@ describe("evaluate (local mode)", () => {
     const data = parseResult(result);
     assert.equal(data.decision, "allow");
   });
+
+  it("denies sensitive-context actions without approval", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "evaluate",
+      arguments: {
+        action_type: "access_dataset",
+        actor_id: "analyst",
+        environment: "staging",
+        context: { sensitivity: "pii", dataset_id: "customers" },
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.ok((data.reason as string).toLowerCase().includes("pii"));
+  });
+
+  it("denies external-context actions without approval", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "evaluate",
+      arguments: {
+        action_type: "send_email",
+        actor_id: "agent",
+        environment: "staging",
+        context: { external: true, recipient: "x@y.com" },
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.ok((data.reason as string).toLowerCase().includes("external"));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -202,19 +303,25 @@ describe("evaluate (remote mode)", () => {
     assert.equal(result.isError, true);
   });
 
-  it("sends correct auth headers", async () => {
+  it("sends correct auth headers and forwards context", async () => {
     forceRemoteMode();
     process.env.ATLASENT_ANON_KEY = "test-anon";
     const fetcher = mockFetch({ decision: "allow", permit_token: "pt_1" });
     globalThis.fetch = fetcher;
     const { client } = await setup();
-    await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    await client.callTool({
+      name: "evaluate",
+      arguments: { ...EVAL_ARGS, context: { recipient: "a@b.com", external: true } },
+    });
 
     const init = fetcher.mock.calls[0].arguments[1] as RequestInit;
     const headers = init.headers as Record<string, string>;
     assert.equal(headers["Authorization"], "Bearer test-key");
     assert.equal(headers["x-anon-key"], "test-anon");
     assert.ok(headers["User-Agent"].startsWith("@atlasent/mcp-server/"));
+
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    assert.deepEqual(body.context, { recipient: "a@b.com", external: true });
   });
 
   it("denies on HTTP 500 (fail-closed)", async () => {
@@ -260,7 +367,6 @@ describe("verify_permit (local mode)", () => {
     forceLocalMode();
     const { client } = await setup();
 
-    // Get a permit via evaluate
     const authzResult = await client.callTool({
       name: "evaluate",
       arguments: { ...EVAL_ARGS, approvals: ["ok"] },
@@ -268,7 +374,6 @@ describe("verify_permit (local mode)", () => {
     const authz = parseResult(authzResult);
     assert.equal(authz.decision, "allow");
 
-    // Verify it
     const verifyResult = await client.callTool({
       name: "verify_permit",
       arguments: { ...EVAL_ARGS, permit_token: authz.permit_token as string },
@@ -325,7 +430,186 @@ describe("verify_permit (remote mode)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// deploy_service — authorization-before-execution proof
+// send_email — authorization-before-execution
+// ---------------------------------------------------------------------------
+
+describe("send_email (authorization-gated)", () => {
+  it("blocks external recipients without approval", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "send_email",
+      arguments: {
+        to: "outsider@competitor.com",
+        subject: "Hi",
+        body: "Hello",
+        actor_id: "agent-7",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.equal(data.result, undefined, "email must NOT send when denied");
+    assert.equal(result.isError, true);
+    assert.ok(banner(result).startsWith("[BLOCKED BY ATLASENT]"));
+  });
+
+  it("sends internal emails without an approval", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "send_email",
+      arguments: {
+        to: "alice@acme.corp",
+        subject: "Hi",
+        body: "Hello",
+        actor_id: "agent-7",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    const res = data.result as Record<string, unknown>;
+    assert.equal(res.status, "sent");
+    assert.equal(res.to, "alice@acme.corp");
+  });
+
+  it("sends external emails when an approval is attached", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "send_email",
+      arguments: {
+        to: "partner@external.com",
+        subject: "Hi",
+        body: "Hello",
+        actor_id: "agent-7",
+        approvals: ["ticket-external-99"],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// access_sensitive_dataset — authorization-before-execution
+// ---------------------------------------------------------------------------
+
+describe("access_sensitive_dataset (authorization-gated)", () => {
+  it("blocks PII dataset reads without approval", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "access_sensitive_dataset",
+      arguments: {
+        dataset_id: "customers_pii",
+        purpose: "cohort analysis",
+        actor_id: "agent-analyst",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.equal(data.result, undefined, "read must NOT return rows when denied");
+    assert.equal(result.isError, true);
+  });
+
+  it("allows public dataset reads", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "access_sensitive_dataset",
+      arguments: {
+        dataset_id: "public_benchmarks",
+        purpose: "report",
+        actor_id: "agent-analyst",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    const res = data.result as Record<string, unknown>;
+    assert.equal(res.classification, "public");
+  });
+
+  it("allows PII reads when an approval is attached", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "access_sensitive_dataset",
+      arguments: {
+        dataset_id: "customers_pii",
+        purpose: "cohort analysis",
+        actor_id: "agent-analyst",
+        approvals: ["dpo-approval-3"],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// write_to_production — authorization-before-execution
+// ---------------------------------------------------------------------------
+
+describe("write_to_production (authorization-gated)", () => {
+  it("blocks production writes with no approval", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "write_to_production",
+      arguments: {
+        system: "billing-db",
+        operation: "apply_refund",
+        payload: { customer_id: "cust_42", amount_cents: 12500 },
+        environment: "production",
+        actor_id: "agent-ops",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.equal(data.result, undefined, "write must NOT apply when denied");
+  });
+
+  it("executes production writes with approval", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "write_to_production",
+      arguments: {
+        system: "billing-db",
+        operation: "apply_refund",
+        payload: { customer_id: "cust_42", amount_cents: 12500 },
+        environment: "production",
+        actor_id: "agent-ops",
+        approvals: ["ticket-42"],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    const res = data.result as Record<string, unknown>;
+    assert.equal(res.status, "written");
+    assert.equal(res.system, "billing-db");
+  });
+
+  it("executes non-production writes without approval", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "write_to_production",
+      arguments: {
+        system: "billing-db",
+        operation: "apply_refund",
+        payload: {},
+        environment: "staging",
+        actor_id: "agent-ops",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deploy_service — original demo tool, kept for back-compat
 // ---------------------------------------------------------------------------
 
 describe("deploy_service (authorization-gated)", () => {
@@ -344,23 +628,6 @@ describe("deploy_service (authorization-gated)", () => {
     assert.equal(data.decision, "deny");
     assert.equal(data.result, undefined, "deploy must NOT execute when denied");
     assert.equal(result.isError, true);
-  });
-
-  it("holds the deploy when policy holds (destructive w/o window)", async () => {
-    forceLocalMode();
-    const { client } = await setup();
-    const result = await client.callTool({
-      name: "deploy_service",
-      arguments: {
-        service_name: "delete-old-records",
-        environment: "staging",
-        actor_id: "agent-7",
-      },
-    });
-    const data = parseResult(result);
-    // action_type is "deploy" in this tool, so destructive rule doesn't fire.
-    // This one should allow.
-    assert.equal(data.decision, "allow");
   });
 
   it("executes the deploy when policy allows", async () => {

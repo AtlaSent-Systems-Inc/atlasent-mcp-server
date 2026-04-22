@@ -1,10 +1,24 @@
 # @atlasent/mcp-server
 
-**Authorize every AI agent tool call before it executes.**
+**AtlaSent is the authorization boundary for AI agents.**
 
-An MCP server that plugs into any [Model Context Protocol](https://modelcontextprotocol.io)-compatible agent (Claude Desktop, Cursor, Claude Code, Copilot, LangChain) and enforces a simple contract: *no protected action runs until AtlaSent has authorized it*. Denied calls never reach the target system. Allowed calls return a permit token you can verify afterwards to close the audit loop.
+This MCP server governs *whether* an agent's tool calls may run — before they do. MCP exposes the tools (`send_email`, `access_sensitive_dataset`, `write_to_production`, ...); AtlaSent decides whether each call is allowed, held for review, or denied. A blocked call never touches the target system.
 
-Ships with a local rules engine so you can run the full evaluate → act → verify flow in under a minute, with zero credentials. The hosted AtlaSent backend is a configuration swap, not a rewrite.
+The repo ships with a local rules engine so you can see the full block/allow flow in under a minute, with zero credentials. The hosted AtlaSent backend is a configuration swap, not a rewrite.
+
+## MCP vs. AtlaSent
+
+MCP is the pipe. AtlaSent is the gate.
+
+| Concern | Owned by |
+|---|---|
+| Exposing tools to the agent | **MCP** (`tools/list`) |
+| Shaping the tool request | **MCP** (input schemas) |
+| Deciding if the tool may run | **AtlaSent** (`authorize()`) |
+| Executing the tool | The tool author |
+| Closing the audit loop | **AtlaSent** (`verify_permit`) |
+
+Every protected tool in this server follows the same pattern — `authorize()` runs before the action. If the decision is not `allow`, the action code never runs.
 
 ## Run the demo in 60 seconds
 
@@ -12,31 +26,22 @@ Ships with a local rules engine so you can run the full evaluate → act → ver
 git clone https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server.git
 cd atlasent-mcp-server
 npm install
-npm run build
 npm run demo
 ```
 
-You'll see three scenarios run end-to-end:
+You'll see seven scenarios run end-to-end:
 
 ```
-Scenario A: agent attempts unauthorized deploy (prod, no approvals)
-    [1] Agent calls deploy_service
-    [2] MCP intercepts → calls authorize(ctx) → policy engine decides
-    [3] Tool execution BLOCKED
-        ✓ deploy did NOT run. The target system was not touched.
-        ✓ reason: Production action 'deploy' requires at least one approval...
-
-Scenario B: agent attempts authorized deploy (prod, with approval)
-    [1] Agent calls deploy_service with approval
-    [2] MCP intercepts → calls authorize(ctx) → policy engine decides
-    [3] Tool execution PROCEEDS
-        result: {"status":"deployed","service":"billing-api",...}
-
-Scenario C: close the audit loop with verify_permit
-    result: {"outcome":"verified","valid":true,...}
+1. send_email (external)          → BLOCKED BY ATLASENT
+2. send_email (internal)          → ALLOWED
+3. access_sensitive_dataset (PII) → BLOCKED BY ATLASENT
+4. access_sensitive_dataset (pub) → ALLOWED
+5. write_to_production (no appr)  → BLOCKED BY ATLASENT
+6. write_to_production (approval) → ALLOWED
+7. verify_permit                  → verified (audit loop closed)
 ```
 
-The demo uses `local` mode (no API key needed). To run the same demo against the hosted AtlaSent backend once your API key is issued:
+The demo uses `local` mode (no API key). To run against the hosted AtlaSent backend:
 
 ```bash
 ATLASENT_MODE=remote \
@@ -45,76 +50,114 @@ ATLASENT_MODE=remote \
   npm run demo
 ```
 
-## Tools
+## Blocked tool call — minimal walkthrough
 
-### `evaluate` — for agents that gate themselves
+Here's a single round-trip for scenario 1 above. The agent asks MCP to send an email to an external domain; AtlaSent blocks it before SMTP is ever touched.
 
-The agent calls `evaluate` before any sensitive action and respects the decision.
+**1. Agent → MCP**
 
-```
-Input:  { action_type, actor_id, environment, approvals?, change_window? }
-Output: { decision: "allow" | "deny" | "hold", permit_token?, reason?, audit_id?, ... }
-```
-
-### `verify_permit` — close the audit loop
-
-After the action runs, the agent calls `verify_permit` with the issued token.
-
-```
-Input:  { permit_token, action_type, actor_id, environment, ... }
-Output: { outcome: "verified" | "expired" | "invalid" | "error", valid: boolean, ... }
-```
-
-### `deploy_service` — demo of the interception pattern
-
-A protected tool that authorizes itself before executing. Every call:
-
-1. Builds an action context from the tool arguments
-2. Calls `authorize(ctx)` — **this is the interception point**
-3. If the decision is anything other than `allow`, returns the decision and does NOT execute
-4. On `allow`, runs the deploy and returns the result plus the permit token
-
-See `src/server.ts` (the `deploy_service` handler) for the exact 20-line pattern every protected tool should follow. In production, your domain tools live on other MCP servers and call AtlaSent's `evaluate` tool before executing; this demo co-locates them so you can see the full flow today.
-
-## Execution Flow
-
-```
-  ┌─────────────┐
-  │    Agent     │  wants to call a protected tool
-  └─────┬───────┘
-        │
-        ▼
-  ┌─────────────────────────┐
-  │    Protected tool       │
-  │  (e.g. deploy_service)  │
-  └─────┬───────────────────┘
-        │ (1) build ActionContext
-        ▼
-  ┌─────────────────┐       ┌──────────────────────────┐
-  │  authorize(ctx)  │──────▶│  engine (local | remote)  │
-  └─────┬───────────┘       └────────┬─────────────────┘
-        │ (2) Decision               │
-        │   allow | deny | hold      │
-        ▼                            ▼
-  ┌──────────────────────────────────────────┐
-  │  decision === "allow"?                    │
-  └──┬───────────────────────┬───────────────┘
-     │ no                    │ yes
-     ▼                       ▼
-  BLOCKED              (3) execute the action
-  return decision            │
-                             ▼
-                      (4) return { decision, permit_token, result }
-                             │
-                             ▼
-                      later: verify_permit closes the audit loop
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "send_email",
+    "arguments": {
+      "to": "ceo@competitor.com",
+      "subject": "Proposal",
+      "body": "Draft proposal attached.",
+      "actor_id": "agent-copilot-7"
+    }
+  }
+}
 ```
 
-The **interception point** is step (2): `authorize()` runs before the action. That's the entire guarantee — if `decision !== "allow"`, the action does not run.
+**2. Inside the tool handler** (`src/server.ts`)
+
+```ts
+const ctx: ActionContext = {
+  action_type: "send_email",
+  actor_id: args.actor_id,
+  environment: "default",
+  context: { recipient: args.to, external: true, subject: args.subject },
+};
+
+const decision = await authorize(ctx);           // ← INTERCEPTION POINT
+
+if (decision.decision !== "allow") {
+  return toolResult(decision);                   // blocked; SMTP never runs
+}
+
+// (never reached for this request)
+const sent = await smtp.send(...);
+return toolResult(decision, { result: sent });
+```
+
+**3. MCP → Agent**
+
+```
+content[0] = "[BLOCKED BY ATLASENT] Action 'send_email' is external and
+              requires at least one approval. — tool did NOT execute."
+content[1] = {
+  "decision": "deny",
+  "reason": "Action 'send_email' is external and requires at least one approval.",
+  "audit_id": "aud_local_mo9nxvgc_88nq2z"
+}
+isError    = true
+```
+
+The agent sees a clearly labeled block and a structured payload. The SMTP server was never contacted. Compare to a tool that ran and failed — that comes back with `[TOOL EXECUTION FAILED] ...` and no `decision` field. The two are impossible to confuse.
+
+## Tools exposed
+
+### AtlaSent primitives
+
+| Tool | Purpose |
+|---|---|
+| `evaluate` | Ask for a decision. Agents that gate themselves call this before any sensitive action. |
+| `verify_permit` | Confirm a previously issued permit. Called after the action runs to close the audit loop. |
+
+### Protected demo tools
+
+Each one calls `authorize()` before touching anything, and each one demonstrates a different blocking signal:
+
+| Tool | Block signal | Demo scenario |
+|---|---|---|
+| `send_email` | `context.external === true` + no approval | blocks external recipients |
+| `access_sensitive_dataset` | `context.sensitivity === "pii" \| "phi" \| ...` + no approval | blocks PII / PHI reads |
+| `write_to_production` | `environment === "production"` + no approval | blocks prod writes |
+| `deploy_service` | same as `write_to_production` (kept for back-compat) | blocks prod deploys |
+
+In production, your domain tools live on other MCP servers and call AtlaSent's `evaluate` tool themselves. This repo co-locates them so the full flow is visible in one process.
+
+## The interception pattern
+
+Every protected tool handler is ~20 lines of the same shape:
+
+```ts
+const ctx: ActionContext = {
+  action_type: "<what the agent is doing>",
+  actor_id:    "<who is acting>",
+  environment: "<prod | staging | default>",
+  approvals:   args.approvals,
+  context:     { /* tool-specific attributes the policy may inspect */ },
+};
+
+// ─── INTERCEPTION POINT ──────────────────────────────
+const decision = await authorize(ctx);
+if (decision.decision !== "allow") {
+  return toolResult(decision);   // BLOCKED → action code never runs
+}
+// ─────────────────────────────────────────────────────
+
+const result = /* run the action */;
+return toolResult(decision, { result });
+```
+
+That's the whole guarantee. The interception is the authorization check before the action. Nothing downstream can mis-order it because the action code is literally after the `if` block.
 
 ## Decision envelope
 
-Every authorization result uses the same shape, so agents and hosts handle all outcomes uniformly:
+Every `authorize()` result uses the same JSON shape:
 
 ```ts
 type Decision =
@@ -123,7 +166,7 @@ type Decision =
   | { decision: "hold";   reason: string;       hold_id?: string; audit_id?: string };
 ```
 
-Verification has a parallel shape:
+Verification parallels:
 
 ```ts
 type VerifyResult = {
@@ -134,29 +177,54 @@ type VerifyResult = {
 };
 ```
 
-**Handling each case:**
+**Agent behavior:**
 
-| Decision | Agent behavior |
+| Decision | Behavior |
 |---|---|
 | `allow` | Proceed. Pass `permit_token` to `verify_permit` after completing the action. |
 | `deny` | Do not proceed. Surface `reason` to the user. |
 | `hold` | Do not proceed. Tell the user the action is queued for human review; reference `hold_id`. |
-| **verification failure** (verify returns `valid: false` or `outcome: "error"`) | Flag the action for review. Something happened outside policy. |
+| verification failure | Flag the action for review — something happened outside policy. |
 
-## Local vs Remote mode
+**Block vs. tool failure.** MCP hosts get two content blocks per tool call: a banner and a structured payload. The banner makes the distinction unmistakable:
 
-The engine behind `authorize()` is pluggable. The same tool handlers work in both modes — swapping the backend is a configuration change.
+- `[ALLOWED BY ATLASENT] ...` — action was authorized and ran.
+- `[BLOCKED BY ATLASENT] ...` — authorization denied; the tool code did not execute.
+- `[HELD BY ATLASENT] ...` — awaiting human review; the tool code did not execute.
+- `[TOOL EXECUTION FAILED] ...` — authorization passed, but the action threw while running.
+- `[PERMIT VERIFIED] ...` / `[PERMIT NOT VERIFIED] ...` — audit-loop closure.
+
+## Canonical payload (`ActionContext`)
+
+```ts
+type ActionContext = {
+  action_type:    string;                     // what the agent wants to do
+  actor_id:       string;                     // who is acting
+  environment:    string;                     // target environment
+  approvals?:     string[];                   // attached approvals (ticket IDs, reviewers)
+  change_window?: string;                     // ISO-8601 window, if scheduled
+  context?:       Record<string, unknown>;    // tool-specific attributes for the policy
+};
+```
+
+`context` is the extensibility point. Put everything the policy needs — recipient, dataset classification, payload preview — in there. AtlaSent policies inspect it; the MCP tool doesn't have to know the rules.
+
+## Local vs. Remote mode
+
+The engine behind `authorize()` is pluggable. Tool handlers don't change — swapping the backend is configuration.
 
 | Mode | When selected | What it does |
 |---|---|---|
-| `local` | `ATLASENT_MODE=local`, or both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are unset | Runs a small in-process rules engine (`src/localEngine.ts`) — no network, no credentials |
-| `remote` | `ATLASENT_MODE=remote`, or both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are set | Calls the hosted AtlaSent backend at `POST /v1-evaluate` and `POST /v1-verify-permit` |
+| `local` | `ATLASENT_MODE=local`, or neither `ATLASENT_API_KEY` nor `ATLASENT_BASE_URL` is set | In-process rules engine (`src/localEngine.ts`). No network. |
+| `remote` | `ATLASENT_MODE=remote`, or both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are set | Hosted backend: `POST /v1-evaluate`, `POST /v1-verify-permit`. |
 
 **Local rules** (for demos):
 
-1. Production action + no approvals → **deny**
+1. `environment === "production"` + no approvals → **deny**
 2. Destructive action (`delete`, `drop`, `destroy`, `truncate`, `purge`, `wipe`, `rm`) + no `change_window` → **hold**
-3. Otherwise → **allow** (with a `pt_local_*` permit valid for 5 minutes)
+3. `context.sensitivity in {"pii", "phi", "high", "restricted", "secret"}` + no approvals → **deny**
+4. `context.external === true` + no approvals → **deny**
+5. Otherwise → **allow** (5-minute permit)
 
 **Environment variables:**
 
@@ -166,8 +234,21 @@ The engine behind `authorize()` is pluggable. The same tool handlers work in bot
 | `ATLASENT_API_KEY` | remote only | — | Bearer token for the hosted API |
 | `ATLASENT_BASE_URL` | remote only | `https://api.atlasent.com` | Hosted API base URL |
 | `ATLASENT_ANON_KEY` | no | — | Optional `x-anon-key` header |
+| `ATLASENT_TRANSPORT` | no | `stdio` | Set to `http` to bind over HTTP (see `src/http-transport.ts`) |
 
-## Claude Desktop config
+## Fail-closed guarantees
+
+Every error path collapses to `{ decision: "deny" }`:
+
+- API unreachable → **deny**
+- Request timeout (10s) → **deny**
+- Malformed response → **deny**
+- Remote returns `allow` without a `permit_token` → **deny**
+- Unknown / invalid decision string → **deny**
+
+The agent never proceeds without an explicit `allow`.
+
+## Claude Desktop / Cursor / Claude Code config
 
 ```json
 {
@@ -185,48 +266,21 @@ The engine behind `authorize()` is pluggable. The same tool handlers work in bot
 }
 ```
 
-Location: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
-
-## Cursor config
-
-Add to `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json` globally), same shape as above.
-
-## Claude Code
+Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
+Cursor: `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json`).
+Claude Code:
 
 ```bash
 claude mcp add atlasent -- npx -y @atlasent/mcp-server
 export ATLASENT_API_KEY=as_live_xxxxxxxxxxxxxxxx
 ```
 
-## Fail-closed guarantees
-
-Every error path collapses to `{ decision: "deny" }`:
-
-- API unreachable → **deny**
-- Request timeout (10s) → **deny**
-- Malformed response → **deny**
-- Remote returns `allow` without a `permit_token` → **deny**
-- Unknown/invalid decision string → **deny**
-
-The agent never proceeds without an explicit `allow`.
-
-## How the hosted backend plugs in later
-
-Nothing in the tool handlers changes when you move from local to remote. The `deploy_service` handler calls `authorize(ctx)`; `authorize()` reads `ATLASENT_MODE` on every call and picks the engine. Switching to the hosted backend is three env vars.
-
-The hosted API contract is already defined in `src/engine.ts` (`authorizeRemote`, `verifyRemote`):
-
-- `POST /v1-evaluate` — body includes `action_type`, `actor_id`, `environment`, `approvals?`, `change_window?`
-- `POST /v1-verify-permit` — body includes `permit_token` and the same context
-
-When the hosted backend's decision contract is finalized, the remote adapter is the only file that might need to change. Tool handlers, tests, and the demo all remain identical.
-
 ## Development
 
 ```bash
 npm install
 npm run build              # compile TypeScript
-npm test                   # 22 unit tests (local + remote mocked)
+npm test                   # unit tests (local + remote mocked)
 npm run test:integration   # requires ATLASENT_API_KEY + ATLASENT_BASE_URL; skips otherwise
 npm run demo               # end-to-end authorization demo (local mode)
 ```

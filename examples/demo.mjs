@@ -3,19 +3,23 @@
  * End-to-end demo: authorization-before-tool-execution.
  *
  * Spawns the MCP server as a child process, connects an MCP client to it over
- * stdio, and drives the full flow for a protected tool (deploy_service):
+ * stdio, and walks through a set of high-signal scenarios:
  *
- *   1. Agent attempts deploy_service (prod, no approvals)   → DENIED, blocked
- *   2. Agent attempts deploy_service (prod, with approvals) → ALLOWED, executes
- *   3. Agent calls verify_permit on the permit_token        → VERIFIED
+ *   1. send_email to an EXTERNAL recipient            → BLOCKED
+ *   2. send_email to an INTERNAL recipient            → ALLOWED, sends
+ *   3. access_sensitive_dataset (PII, no approval)    → BLOCKED
+ *   4. access_sensitive_dataset (public dataset)      → ALLOWED, reads
+ *   5. write_to_production (no approval)              → BLOCKED
+ *   6. write_to_production (with approval)            → ALLOWED, writes
+ *   7. verify_permit on the write's permit_token      → VERIFIED
  *
  * Run with:
  *   npm run build
- *   node examples/demo.mjs
+ *   npm run demo
  *
  * Default mode is "local" (no credentials needed). To run against the hosted
  * AtlaSent backend instead:
- *   ATLASENT_MODE=remote ATLASENT_API_KEY=... ATLASENT_BASE_URL=... node examples/demo.mjs
+ *   ATLASENT_MODE=remote ATLASENT_API_KEY=... ATLASENT_BASE_URL=... npm run demo
  */
 
 import { fileURLToPath } from "node:url";
@@ -30,8 +34,19 @@ const SERVER_ENTRY = resolve(__dirname, "..", "dist", "index.js");
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Tool results now carry TWO text blocks: a human-readable banner and a
+ * structured JSON payload. Parse the JSON from the last block.
+ */
 function parse(result) {
-  return JSON.parse(result.content[0].text);
+  const blocks = result.content ?? [];
+  const json = blocks[blocks.length - 1]?.text ?? "{}";
+  return JSON.parse(json);
+}
+
+function banner(result) {
+  const blocks = result.content ?? [];
+  return blocks[0]?.text ?? "";
 }
 
 function section(title) {
@@ -46,6 +61,26 @@ function step(n, description) {
 
 function show(label, data) {
   console.log(`    ${label}: ${JSON.stringify(data)}`);
+}
+
+function expectBlocked(result, label) {
+  const data = parse(result);
+  if (data.decision === "deny" || data.decision === "hold") {
+    console.log(`    ${banner(result)}`);
+    return data;
+  }
+  console.log(`    ✗ UNEXPECTED: ${label} was not blocked (decision=${data.decision}). Demo premise failed.`);
+  process.exit(1);
+}
+
+function expectAllowed(result, label) {
+  const data = parse(result);
+  if (data.decision === "allow") {
+    console.log(`    ${banner(result)}`);
+    return data;
+  }
+  console.log(`    ✗ UNEXPECTED: ${label} was not allowed (decision=${data.decision}). Demo premise failed.`);
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -63,116 +98,171 @@ async function main() {
   await client.connect(transport);
 
   section(`AtlaSent MCP demo — mode=${process.env.ATLASENT_MODE ?? "local"}`);
+  console.log(
+    "AtlaSent is the authorization boundary. Every protected tool calls\n" +
+      "authorize() BEFORE running. If the decision isn't 'allow', the tool\n" +
+      "code never executes — the target system is not touched.",
+  );
 
   // -----------------------------------------------------------------------
-  // Scenario A — Unauthorized action gets blocked
+  // 1. send_email — external recipient, no approval → BLOCKED
   // -----------------------------------------------------------------------
-  section("Scenario A: agent attempts unauthorized deploy (prod, no approvals)");
-
-  step(1, "Agent calls deploy_service");
+  section("1. send_email → external recipient, no approval (should be BLOCKED)");
+  step(1, "Agent calls send_email");
   show("request", {
-    service_name: "billing-api",
-    environment: "production",
+    to: "ceo@competitor.com",
+    subject: "Proposal",
     actor_id: "agent-copilot-7",
   });
-
-  const blocked = await client.callTool({
-    name: "deploy_service",
+  step(2, "MCP intercepts → authorize(ctx) → policy decides");
+  const emailBlocked = await client.callTool({
+    name: "send_email",
     arguments: {
-      service_name: "billing-api",
-      environment: "production",
+      to: "ceo@competitor.com",
+      subject: "Proposal",
+      body: "Draft proposal attached.",
       actor_id: "agent-copilot-7",
     },
   });
-  const blockedDecision = parse(blocked);
-
-  step(2, "MCP intercepts → calls authorize(ctx) → policy engine decides");
-  show("decision", blockedDecision);
-
-  step(3, "Tool execution BLOCKED");
-  if (blockedDecision.decision === "deny" || blockedDecision.decision === "hold") {
-    console.log("    ✓ deploy did NOT run. The target system was not touched.");
-    console.log(`    ✓ reason: ${blockedDecision.reason}`);
-  } else {
-    console.log("    ✗ UNEXPECTED: decision was not deny/hold. Demo premise failed.");
-    process.exit(1);
-  }
+  const blockedEmail = expectBlocked(emailBlocked, "external email");
+  show("reason", blockedEmail.reason);
+  console.log("    ✓ email did NOT leave the system.");
 
   // -----------------------------------------------------------------------
-  // Scenario B — Authorized action proceeds
+  // 2. send_email — internal recipient → ALLOWED
   // -----------------------------------------------------------------------
-  section("Scenario B: agent attempts authorized deploy (prod, with approval)");
-
-  step(1, "Agent calls deploy_service with approval");
+  section("2. send_email → internal recipient (should be ALLOWED)");
+  step(1, "Agent calls send_email");
   show("request", {
-    service_name: "billing-api",
-    environment: "production",
+    to: "alice@acme.corp",
+    subject: "Weekly status",
     actor_id: "agent-copilot-7",
-    approvals: ["ticket-42"],
   });
-
-  const allowed = await client.callTool({
-    name: "deploy_service",
+  step(2, "MCP intercepts → authorize(ctx) → policy decides");
+  const emailAllowed = await client.callTool({
+    name: "send_email",
     arguments: {
-      service_name: "billing-api",
-      environment: "production",
+      to: "alice@acme.corp",
+      subject: "Weekly status",
+      body: "See attached.",
       actor_id: "agent-copilot-7",
-      approvals: ["ticket-42"],
     },
   });
-  const allowedDecision = parse(allowed);
+  const allowedEmail = expectAllowed(emailAllowed, "internal email");
+  show("result", allowedEmail.result);
 
-  step(2, "MCP intercepts → calls authorize(ctx) → policy engine decides");
-  show("decision", {
-    decision: allowedDecision.decision,
-    permit_token: allowedDecision.permit_token,
-    audit_id: allowedDecision.audit_id,
+  // -----------------------------------------------------------------------
+  // 3. access_sensitive_dataset — PII, no approval → BLOCKED
+  // -----------------------------------------------------------------------
+  section("3. access_sensitive_dataset → PII, no approval (should be BLOCKED)");
+  step(1, "Agent calls access_sensitive_dataset");
+  show("request", {
+    dataset_id: "customers_pii",
+    purpose: "cohort analysis",
+    actor_id: "agent-analyst",
   });
-
-  if (allowedDecision.decision !== "allow") {
-    console.log("    ✗ UNEXPECTED: decision was not allow. Demo premise failed.");
-    process.exit(1);
-  }
-
-  step(3, "Tool execution PROCEEDS");
-  show("result", allowedDecision.result);
-  console.log("    ✓ deploy executed.");
+  step(2, "MCP intercepts → authorize(ctx) → policy decides");
+  const pii = await client.callTool({
+    name: "access_sensitive_dataset",
+    arguments: {
+      dataset_id: "customers_pii",
+      purpose: "cohort analysis",
+      actor_id: "agent-analyst",
+    },
+  });
+  const blockedPii = expectBlocked(pii, "PII dataset read");
+  show("reason", blockedPii.reason);
+  console.log("    ✓ zero rows returned to the agent.");
 
   // -----------------------------------------------------------------------
-  // Scenario C — Close the audit loop
+  // 4. access_sensitive_dataset — public dataset → ALLOWED
   // -----------------------------------------------------------------------
-  section("Scenario C: close the audit loop with verify_permit");
+  section("4. access_sensitive_dataset → public dataset (should be ALLOWED)");
+  const publicDataset = await client.callTool({
+    name: "access_sensitive_dataset",
+    arguments: {
+      dataset_id: "public_benchmarks",
+      purpose: "report",
+      actor_id: "agent-analyst",
+    },
+  });
+  const allowedPublic = expectAllowed(publicDataset, "public dataset read");
+  show("rows", allowedPublic.result.row_count);
 
-  step(1, "Agent calls verify_permit with the issued token");
-  show("request", { permit_token: allowedDecision.permit_token });
+  // -----------------------------------------------------------------------
+  // 5. write_to_production — no approval → BLOCKED
+  // -----------------------------------------------------------------------
+  section("5. write_to_production → no approval (should be BLOCKED)");
+  step(1, "Agent calls write_to_production");
+  show("request", {
+    system: "billing-db",
+    operation: "apply_refund",
+    environment: "production",
+    actor_id: "agent-ops",
+  });
+  step(2, "MCP intercepts → authorize(ctx) → policy decides");
+  const writeBlocked = await client.callTool({
+    name: "write_to_production",
+    arguments: {
+      system: "billing-db",
+      operation: "apply_refund",
+      payload: { customer_id: "cust_42", amount_cents: 12500 },
+      environment: "production",
+      actor_id: "agent-ops",
+    },
+  });
+  const blockedWrite = expectBlocked(writeBlocked, "prod write");
+  show("reason", blockedWrite.reason);
+  console.log("    ✓ billing-db was NOT written.");
 
+  // -----------------------------------------------------------------------
+  // 6. write_to_production — with approval → ALLOWED
+  // -----------------------------------------------------------------------
+  section("6. write_to_production → with approval (should be ALLOWED)");
+  const writeAllowed = await client.callTool({
+    name: "write_to_production",
+    arguments: {
+      system: "billing-db",
+      operation: "apply_refund",
+      payload: { customer_id: "cust_42", amount_cents: 12500 },
+      environment: "production",
+      actor_id: "agent-ops",
+      approvals: ["ticket-42", "reviewer:alice"],
+    },
+  });
+  const allowedWrite = expectAllowed(writeAllowed, "prod write w/ approval");
+  show("result", allowedWrite.result);
+  show("permit_token", allowedWrite.permit_token);
+
+  // -----------------------------------------------------------------------
+  // 7. Close the audit loop
+  // -----------------------------------------------------------------------
+  section("7. verify_permit → close the audit loop");
   const verified = await client.callTool({
     name: "verify_permit",
     arguments: {
-      permit_token: allowedDecision.permit_token,
-      action_type: "deploy",
-      actor_id: "agent-copilot-7",
+      permit_token: allowedWrite.permit_token,
+      action_type: "write",
+      actor_id: "agent-ops",
       environment: "production",
-      approvals: ["ticket-42"],
+      approvals: ["ticket-42", "reviewer:alice"],
     },
   });
-  const verifyResult = parse(verified);
-
-  step(2, "Verification result");
-  show("result", verifyResult);
-  if (verifyResult.valid) {
-    console.log("    ✓ permit verified. Audit loop closed.");
-  } else {
-    console.log(`    ✗ permit not valid: ${verifyResult.reason}`);
-  }
+  const verifyData = parse(verified);
+  console.log(`    ${banner(verified)}`);
+  show("result", verifyData);
 
   // -----------------------------------------------------------------------
   section("Summary");
   console.log(
     [
-      `  A. unauthorized deploy: BLOCKED (${blockedDecision.decision})`,
-      `  B. authorized deploy:   EXECUTED (${allowedDecision.decision}, service=${allowedDecision.result.service})`,
-      `  C. verify_permit:       ${verifyResult.outcome} (valid=${verifyResult.valid})`,
+      "  1. send_email (external)        → BLOCKED",
+      "  2. send_email (internal)        → ALLOWED",
+      "  3. access_dataset (PII)         → BLOCKED",
+      "  4. access_dataset (public)      → ALLOWED",
+      "  5. write_to_production (no appr)→ BLOCKED",
+      "  6. write_to_production (appr)   → ALLOWED",
+      `  7. verify_permit                → ${verifyData.outcome} (valid=${verifyData.valid})`,
     ].join("\n"),
   );
 

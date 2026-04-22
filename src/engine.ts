@@ -103,6 +103,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   };
   if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
   if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
+  if (ctx.context !== undefined) body.context = ctx.context;
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
 
@@ -147,6 +148,7 @@ async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyRe
   };
   if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
   if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
+  if (ctx.context !== undefined) body.context = ctx.context;
 
   const data = await post<RawVerify>("/v1-verify-permit", body);
 

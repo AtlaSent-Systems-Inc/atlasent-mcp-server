@@ -1,20 +1,27 @@
 /**
  * Local policy engine — used when no hosted AtlaSent backend is configured.
  *
- * This is intentionally small: a few deterministic rules that mirror the kind
+ * Intentionally small: a handful of deterministic rules that mirror the kind
  * of decisions the hosted engine will make. It lets developers run the MCP
  * server, drive the full evaluate → act → verify flow, and see allow / deny /
  * hold outcomes without any network credentials.
  *
  * Rules (fail-closed defaults):
- *   1. production action + no approvals     → deny
- *   2. destructive action + no change window → hold
- *   3. otherwise                              → allow
+ *   1. production action + no approvals            → deny
+ *   2. destructive action + no change_window       → hold
+ *   3. context.sensitivity in {high, restricted}
+ *      + no approvals                              → deny
+ *   4. context.external === true + no approvals    → deny
+ *   5. otherwise                                    → allow
+ *
+ * Real policies live in AtlaSent, not here. This engine only exists so the
+ * interception-point demo can run offline.
  */
 
 import type { ActionContext, Decision, VerifyResult } from "./decision.js";
 
 const DESTRUCTIVE_KEYWORDS = ["delete", "drop", "destroy", "truncate", "rm", "purge", "wipe"];
+const SENSITIVE_LEVELS = new Set(["high", "restricted", "pii", "phi", "secret"]);
 const PERMIT_TTL_MS = 5 * 60 * 1000;
 
 function shortId(prefix: string): string {
@@ -24,6 +31,15 @@ function shortId(prefix: string): string {
 function isDestructive(action: string): boolean {
   const a = action.toLowerCase();
   return DESTRUCTIVE_KEYWORDS.some((k) => a.includes(k));
+}
+
+function sensitivity(ctx: ActionContext): string | null {
+  const raw = ctx.context?.["sensitivity"];
+  return typeof raw === "string" ? raw.toLowerCase() : null;
+}
+
+function isExternal(ctx: ActionContext): boolean {
+  return ctx.context?.["external"] === true;
 }
 
 export function authorizeLocal(ctx: ActionContext): Decision {
@@ -45,6 +61,23 @@ export function authorizeLocal(ctx: ActionContext): Decision {
       decision: "hold",
       reason: `Destructive action '${ctx.action_type}' requires a scheduled change_window. Awaiting human review.`,
       hold_id: shortId("hold_local"),
+      audit_id,
+    };
+  }
+
+  const level = sensitivity(ctx);
+  if (level && SENSITIVE_LEVELS.has(level) && !hasApproval) {
+    return {
+      decision: "deny",
+      reason: `Action '${ctx.action_type}' touches ${level}-sensitivity data and requires at least one approval.`,
+      audit_id,
+    };
+  }
+
+  if (isExternal(ctx) && !hasApproval) {
+    return {
+      decision: "deny",
+      reason: `Action '${ctx.action_type}' is external and requires at least one approval.`,
       audit_id,
     };
   }
