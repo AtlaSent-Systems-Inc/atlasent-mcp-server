@@ -88,54 +88,59 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 interface RawEvaluate {
   decision: string;
-  permit?: { id: string; status?: string; expires_at?: string };
-  deny_reason?: string;
-  evaluation_id?: string;
-  // Server also returns matched_rule_id, matched_policy_id, deny_code,
-  // risk: {level, score, reasons}, evaluated_at — currently unused by
-  // mcp-server, kept on the wire for future telemetry surface.
+  permit_token?: string;
+  request_id?: string;
+  expires_at?: string;
+  denial?: { reason?: string; code?: string };
+  // Server also returns mode, cache_hit, evaluation_ms, decisionObject,
+  // outcome_kind, intent_match, audit_entry_hash, etc. — surfaced on
+  // the wire for future telemetry; not consumed by mcp-server today.
 }
 
 async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
-  // The atlasent-api edge function (supabase/functions/v1-evaluate)
-  // reads payload.actor.id, payload.action.id, payload.context,
-  // payload.environment. Approvals/change_window aren't first-class
-  // on the wire — they ride inside `context` so the rule engine can
-  // reach them via standard policy expressions.
-  const context: Record<string, unknown> = {};
+  // Wire shape per atlasent-api/supabase/functions/v1-evaluate/handler.ts:
+  //   - top-level required: action_type, actor_id
+  //   - top-level optional: request_id, shadow, explain, traceparent,
+  //     authority_scope, state_snapshot, dependency_permit_token_hashes,
+  //     signal_window_seconds, pressure_window_seconds, intent, source_system, cdo
+  //   - `context` is an opaque record the rule engine sees verbatim
+  //
+  // `environment` is NOT a top-level field — handler.ts derives it from
+  // the API key (`keyEnvironment`). We include it inside `context` so
+  // policy expressions that condition on environment still resolve.
+  // approvals / change_window ride in `context` for the same reason.
+  const context: Record<string, unknown> = { environment: ctx.environment };
   if (ctx.approvals !== undefined) context.approvals = ctx.approvals;
   if (ctx.change_window !== undefined) context.change_window = ctx.change_window;
 
   const body: Record<string, unknown> = {
-    action: { id: ctx.action_type },
-    actor: { id: ctx.actor_id },
-    environment: ctx.environment,
+    action_type: ctx.action_type,
+    actor_id: ctx.actor_id,
     context,
   };
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
 
   if (data.decision === "allow") {
-    const permitId = data.permit?.id;
-    if (!permitId) throw new Error("Remote allowed the action but returned no permit.id");
-    const out: Decision = { decision: "allow", permit_token: permitId };
-    if (data.evaluation_id) out.audit_id = data.evaluation_id;
+    if (!data.permit_token) throw new Error("Remote allowed the action but returned no permit_token");
+    const out: Decision = { decision: "allow", permit_token: data.permit_token };
+    if (data.request_id) out.audit_id = data.request_id;
     return out;
   }
 
   if (data.decision === "hold" || data.decision === "escalate") {
     return {
       decision: "hold",
-      reason: data.deny_reason ?? "Held for human review",
-      ...(data.evaluation_id ? { audit_id: data.evaluation_id } : {}),
+      reason: data.denial?.reason ?? "Held for human review",
+      ...(data.request_id ? { audit_id: data.request_id } : {}),
     };
   }
 
   // Anything else (including "deny" or an unknown decision) is fail-closed.
   return {
     decision: "deny",
-    reason: data.deny_reason ?? `Denied (decision=${data.decision})`,
-    ...(data.evaluation_id ? { audit_id: data.evaluation_id } : {}),
+    reason: data.denial?.reason ?? `Denied (decision=${data.decision})`,
+    ...(data.request_id ? { audit_id: data.request_id } : {}),
   };
 }
 

@@ -176,37 +176,38 @@ describe("evaluate (remote mode)", () => {
     forceRemoteMode();
     globalThis.fetch = mockFetch({
       decision: "allow",
-      permit: { id: "pt_xyz", status: "issued", expires_at: "2026-01-01T00:15:00Z" },
-      evaluation_id: "aud_1",
+      permit_token: "pt_xyz",
+      request_id: "req_1",
+      expires_at: "2026-01-01T01:00:00Z",
     });
     const { client } = await setup();
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "allow");
     assert.equal(data.permit_token, "pt_xyz");
-    assert.equal(data.audit_id, "aud_1");
+    assert.equal(data.audit_id, "req_1");
   });
 
   it("normalizes escalate to hold", async () => {
     forceRemoteMode();
     globalThis.fetch = mockFetch({
       decision: "escalate",
-      deny_reason: "needs SRE review",
-      evaluation_id: "aud_2",
+      denial: { reason: "needs SRE review", code: "REQUIRES_OVERRIDE" },
+      request_id: "req_2",
     });
     const { client } = await setup();
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "hold");
     assert.equal(data.reason, "needs SRE review");
-    assert.equal(data.audit_id, "aud_2");
+    assert.equal(data.audit_id, "req_2");
     assert.equal(result.isError, true);
   });
 
-  it("sends nested actor/action body and correct auth headers", async () => {
+  it("sends flat handler.ts body and correct auth headers", async () => {
     forceRemoteMode();
     process.env.ATLASENT_ANON_KEY = "test-anon";
-    const fetcher = mockFetch({ decision: "allow", permit: { id: "pt_1" } });
+    const fetcher = mockFetch({ decision: "allow", permit_token: "pt_1" });
     globalThis.fetch = fetcher;
     const { client } = await setup();
     await client.callTool({
@@ -221,10 +222,15 @@ describe("evaluate (remote mode)", () => {
     assert.ok(headers["User-Agent"].startsWith("@atlasent/mcp-server/"));
 
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
-    assert.deepEqual(body.action, { id: "deploy" });
-    assert.deepEqual(body.actor, { id: "user-1" });
-    assert.equal(body.environment, "production");
-    assert.deepEqual(body.context, { approvals: ["t-1"], change_window: "win-1" });
+    assert.equal(body.action_type, "deploy");
+    assert.equal(body.actor_id, "user-1");
+    assert.deepEqual(body.context, {
+      environment: "production",
+      approvals: ["t-1"],
+      change_window: "win-1",
+    });
+    // No top-level `environment` — handler.ts derives it from the API key.
+    assert.equal(body.environment, undefined);
   });
 
   it("denies on HTTP 500 (fail-closed)", async () => {
@@ -250,14 +256,14 @@ describe("evaluate (remote mode)", () => {
     assert.ok((data.reason as string).includes("ECONNREFUSED"));
   });
 
-  it("denies when remote allows but returns no permit.id", async () => {
+  it("denies when remote allows but returns no permit_token", async () => {
     forceRemoteMode();
     globalThis.fetch = mockFetch({ decision: "allow" });
     const { client } = await setup();
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "deny");
-    assert.ok((data.reason as string).includes("permit.id"));
+    assert.ok((data.reason as string).includes("permit_token"));
   });
 });
 

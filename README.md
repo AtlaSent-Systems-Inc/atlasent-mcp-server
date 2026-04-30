@@ -205,7 +205,7 @@ Every error path collapses to `{ decision: "deny" }`:
 - API unreachable → **deny**
 - Request timeout (10s) → **deny**
 - Malformed response → **deny**
-- Remote returns `allow` without a `permit.id` → **deny**
+- Remote returns `allow` without a `permit_token` → **deny**
 - Unknown/invalid decision string → **deny**
 - Verify returns an unrecognized `verify_error_code` → **invalid** (treated as not valid)
 
@@ -215,16 +215,14 @@ The agent never proceeds without an explicit `allow`.
 
 Nothing in the tool handlers changes when you move from local to remote. The `deploy_service` handler calls `authorize(ctx)`; `authorize()` reads `ATLASENT_MODE` on every call and picks the engine. Switching to the hosted backend is three env vars.
 
-The remote adapter (`src/engine.ts`) speaks the AtlaSent API edge-function shape directly:
+The remote adapter (`src/engine.ts`) speaks the AtlaSent API edge-function shape directly. Both endpoints are served by `atlasent-api/supabase/functions/v1-{evaluate,verify-permit}/handler.ts`.
 
 - `POST /v1-evaluate`
-  - request: `{ action: { id }, actor: { id }, environment, context }` — the MCP-side `action_type` / `actor_id` are packed into `action.id` / `actor.id`; `approvals` and `change_window` ride inside `context`.
-  - response: `{ decision, permit?: { id, ... }, deny_reason?, evaluation_id, ... }` — `permit.id` is exposed to MCP hosts as `permit_token`.
+  - request: `{ action_type, actor_id, context }` — flat top-level fields. mcp-server passes `environment`, `approvals`, and `change_window` inside `context` so policy expressions can read them.
+  - response: `{ decision, permit_token?, request_id, expires_at?, denial?, ... }` — top-level `permit_token` (raw UUID) is exposed to MCP hosts as the MCP envelope's `permit_token`; `request_id` becomes `audit_id`.
 - `POST /v1-verify-permit`
   - request: `{ permit_token, action_type, actor_id }`
   - response: `{ valid, outcome: "allow" | "deny", verify_error_code?, reason? }` — server `outcome === "allow"` becomes `verified`; `verify_error_code` is mapped to `expired` / `invalid` / `error` and falls through to `invalid` for anything unrecognized.
-
-If the canonical schemas in `atlasent-sdk/contract/schemas/` are reconciled with the deployed edge functions, the remote adapter in `engine.ts` is the only place that needs to move.
 
 ## Development
 
