@@ -10,13 +10,28 @@
  *   (unset)                         → remote if ATLASENT_API_KEY and
  *                                      ATLASENT_BASE_URL are set, else local
  *
- * The hosted backend is a configuration swap, not a rewrite: every tool
- * handler calls `authorize(ctx)` and gets back the same Decision shape.
+ * Wire contract: `POST /v1/evaluate` + `POST /v1/verify-permit`, snake_case
+ * `{actor, action, target, context}` bodies — see `schemas.ts` and the
+ * canonical types at
+ * https://github.com/AtlaSent-Systems-Inc/atlasent/blob/main/packages/types/src/index.ts
+ *
+ * Fail-closed: every thrown error collapses to `{ decision: 'deny' }` /
+ * `{ outcome: 'error', valid: false }`.
  */
 
 import type { ActionContext, Decision, VerifyResult } from "./decision.js";
 import { denyDecision } from "./decision.js";
 import { authorizeLocal, verifyLocal } from "./localEngine.js";
+import type {
+  Actor,
+  Action,
+  Target,
+  EvaluateRequest,
+  EvaluateResponse,
+  Environment,
+  VerifyPermitRequest,
+  VerifyPermitResponse,
+} from "./schemas.js";
 
 const VERSION = "1.0.0";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -51,9 +66,9 @@ export async function verify(token: string, ctx: ActionContext): Promise<VerifyR
   }
 }
 
-// ---------------------------------------------------------------------------
-// Remote (hosted AtlaSent backend)
-// ---------------------------------------------------------------------------
+// ──────────────────────────────────────────────────────────────────────────
+// Remote (hosted AtlaSent backend) — canonical /v1/* contract
+// ──────────────────────────────────────────────────────────────────────────
 
 function buildHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -86,79 +101,93 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
-interface RawEvaluate {
-  decision: string;
-  permit_token?: string;
-  reason?: string;
-  audit_id?: string;
-  conditions?: string[];
-  hold_id?: string;
+function normalizeEnvironment(env: string): Environment {
+  return env === "production" || env === "staging" || env === "development" ? env : "production";
+}
+
+function randomId(): string {
+  // Short id for action.id when the caller did not supply one.
+  return `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Translate the MCP-friendly ActionContext into the canonical wire body. */
+function toEvaluateRequest(ctx: ActionContext): EvaluateRequest {
+  const actor: Actor = { id: ctx.actor_id, type: "agent" };
+  const action: Action = { id: randomId(), type: ctx.action_type };
+  const target: Target = {
+    id: ctx.action_type,
+    type: "action",
+    environment: normalizeEnvironment(ctx.environment),
+  };
+  const context: Record<string, unknown> = {};
+  if (ctx.approvals !== undefined) context.approvals = ctx.approvals;
+  if (ctx.change_window !== undefined) context.change_window = ctx.change_window;
+  return Object.keys(context).length > 0
+    ? { actor, action, target, context }
+    : { actor, action, target };
 }
 
 async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
-  const body: Record<string, unknown> = {
-    action_type: ctx.action_type,
-    actor_id: ctx.actor_id,
-    environment: ctx.environment,
-  };
-  if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
-  if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
-
-  const data = await post<RawEvaluate>("/v1-evaluate", body);
+  const data = await post<EvaluateResponse>("/v1/evaluate", toEvaluateRequest(ctx));
 
   if (data.decision === "allow") {
-    if (!data.permit_token) throw new Error("Remote allowed the action but returned no permit_token");
+    if (!data.permit_token)
+      throw new Error("Remote allowed the action but returned no permit_token");
     const out: Decision = { decision: "allow", permit_token: data.permit_token };
-    if (data.audit_id) out.audit_id = data.audit_id;
-    if (data.conditions?.length) out.conditions = data.conditions;
+    if (data.audit_hash) out.audit_id = data.audit_hash;
     return out;
   }
 
-  if (data.decision === "hold" || data.decision === "escalate") {
+  if (data.decision === "hold") {
     return {
       decision: "hold",
       reason: data.reason ?? "Held for human review",
-      ...(data.hold_id && { hold_id: data.hold_id }),
-      ...(data.audit_id && { audit_id: data.audit_id }),
+      ...(data.audit_hash && { audit_id: data.audit_hash }),
     };
   }
 
-  // Anything else (including "deny" or an unknown decision) is fail-closed.
+  if (data.decision === "escalate") {
+    return {
+      decision: "escalate",
+      reason: data.reason ?? "Escalated to higher-authority reviewer",
+      ...(data.audit_hash && { audit_id: data.audit_hash }),
+    };
+  }
+
+  // `deny` and any unknown decision string fail closed.
   return {
     decision: "deny",
     reason: data.reason ?? `Denied (decision=${data.decision})`,
-    ...(data.audit_id && { audit_id: data.audit_id }),
+    ...(data.audit_hash && { audit_id: data.audit_hash }),
   };
-}
-
-interface RawVerify {
-  outcome: string;
-  valid: boolean;
-  reason?: string;
-  audit_id?: string;
 }
 
 async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyResult> {
-  const body: Record<string, unknown> = {
+  const body: VerifyPermitRequest = {
     permit_token: token,
-    action_type: ctx.action_type,
-    actor_id: ctx.actor_id,
-    environment: ctx.environment,
+    execution_context: {
+      action_type: ctx.action_type,
+      actor_id: ctx.actor_id,
+      environment: ctx.environment,
+      ...(ctx.approvals !== undefined && { approvals: ctx.approvals }),
+      ...(ctx.change_window !== undefined && { change_window: ctx.change_window }),
+    },
   };
-  if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
-  if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
 
-  const data = await post<RawVerify>("/v1-verify-permit", body);
+  const data = await post<VerifyPermitResponse>("/v1/verify-permit", body);
 
-  const outcome =
-    data.outcome === "verified" || data.outcome === "expired" || data.outcome === "invalid"
-      ? data.outcome
-      : "error";
+  if (data.consumed === true) {
+    return {
+      outcome: "verified",
+      valid: true,
+      ...(data.audit_hash && { audit_id: data.audit_hash }),
+    };
+  }
 
   return {
-    outcome,
-    valid: data.valid === true,
-    ...(data.reason && { reason: data.reason }),
-    ...(data.audit_id && { audit_id: data.audit_id }),
+    outcome: "invalid",
+    valid: false,
+    reason: "Permit was not consumed by the server",
+    ...(data.audit_hash && { audit_id: data.audit_hash }),
   };
 }

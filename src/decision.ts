@@ -1,8 +1,12 @@
 /**
- * Shared decision envelope for authorization checks.
+ * MCP-friendly decision envelope.
  *
- * Every `authorize()` call returns a Decision. Every Decision serializes to
- * the same JSON shape, so clients can handle allow/deny/hold uniformly.
+ * The MCP server speaks two shapes:
+ *   - Outward: a normalized envelope (this file) so agents handle every
+ *     outcome uniformly via `decision === 'allow'`.
+ *   - Inward (wire): the canonical `EvaluateResponse` from `schemas.ts`.
+ *
+ * The engine maps wire → envelope. Tool handlers only ever see this shape.
  */
 
 export type ActionContext = {
@@ -33,7 +37,14 @@ export type HoldDecision = {
   audit_id?: string;
 };
 
-export type Decision = AllowDecision | DenyDecision | HoldDecision;
+export type EscalateDecision = {
+  decision: "escalate";
+  reason: string;
+  escalation_id?: string;
+  audit_id?: string;
+};
+
+export type Decision = AllowDecision | DenyDecision | HoldDecision | EscalateDecision;
 
 /** Result of verifying a previously issued permit. */
 export type VerifyResult = {
