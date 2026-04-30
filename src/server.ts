@@ -20,21 +20,21 @@ export const VERSION = "1.0.0";
 
 const actionType = z
   .string()
-  .meta({ description: "The action the agent is about to perform (e.g. deploy, delete, merge, execute_query, send_email)." });
+  .describe("The action the agent is about to perform (e.g. deploy, delete, merge, execute_query, send_email).");
 const actorId = z
   .string()
-  .meta({ description: "Identifier for the user or service account the agent is acting on behalf of." });
+  .describe("Identifier for the user or service account the agent is acting on behalf of.");
 const environment = z
   .string()
-  .meta({ description: "Target environment for the action (e.g. production, staging, development)." });
+  .describe("Target environment for the action (e.g. production, staging, development).");
 const approvals = z
   .array(z.string())
   .optional()
-  .meta({ description: "Approval identifiers already obtained for this action (e.g. ticket IDs, reviewer handles)." });
+  .describe("Approval identifiers already obtained for this action (e.g. ticket IDs, reviewer handles).");
 const changeWindow = z
   .string()
   .optional()
-  .meta({ description: "ISO-8601 time window during which the change is permitted (e.g. 2025-01-15T02:00:00Z/PT4H)." });
+  .describe("ISO-8601 time window during which the change is permitted (e.g. 2025-01-15T02:00:00Z/PT4H).");
 
 function log(event: string, data: Record<string, unknown>): void {
   // Log to stderr so we don't interfere with MCP stdio messaging.
@@ -78,8 +78,8 @@ export function createServer(): McpServer {
         action_type: args.action_type,
         actor_id: args.actor_id,
         environment: args.environment,
-        ...(args.approvals && { approvals: args.approvals }),
-        ...(args.change_window && { change_window: args.change_window }),
+        ...(args.approvals ? { approvals: args.approvals } : {}),
+        ...(args.change_window ? { change_window: args.change_window } : {}),
       };
       const decision = await authorize(ctx);
       log("evaluate", { ctx, decision });
@@ -100,7 +100,7 @@ export function createServer(): McpServer {
         "`invalid`, or `error`. If `valid` is false, the action should be flagged " +
         "for review.",
       inputSchema: z.object({
-        permit_token: z.string().meta({ description: "The permit_token returned by a prior evaluate call." }),
+        permit_token: z.string().describe("The permit_token returned by a prior evaluate call."),
         action_type: actionType,
         actor_id: actorId,
         environment,
@@ -119,8 +119,8 @@ export function createServer(): McpServer {
         action_type: args.action_type,
         actor_id: args.actor_id,
         environment: args.environment,
-        ...(args.approvals && { approvals: args.approvals }),
-        ...(args.change_window && { change_window: args.change_window }),
+        ...(args.approvals ? { approvals: args.approvals } : {}),
+        ...(args.change_window ? { change_window: args.change_window } : {}),
       };
       const result = await verify(args.permit_token, ctx);
       log("verify_permit", { ctx, permit_token: args.permit_token, result });
@@ -150,7 +150,7 @@ export function createServer(): McpServer {
         "deploy runs. Denied or held calls are blocked and never touch the target " +
         "system. On allow, the deploy executes and a permit_token is returned.",
       inputSchema: z.object({
-        service_name: z.string().meta({ description: "Name of the service to deploy." }),
+        service_name: z.string().describe("Name of the service to deploy."),
         environment,
         actor_id: actorId,
         approvals,
@@ -168,8 +168,8 @@ export function createServer(): McpServer {
         action_type: "deploy",
         actor_id: args.actor_id,
         environment: args.environment,
-        ...(args.approvals && { approvals: args.approvals }),
-        ...(args.change_window && { change_window: args.change_window }),
+        ...(args.approvals ? { approvals: args.approvals } : {}),
+        ...(args.change_window ? { change_window: args.change_window } : {}),
       };
 
       // ---- INTERCEPTION POINT --------------------------------------------
