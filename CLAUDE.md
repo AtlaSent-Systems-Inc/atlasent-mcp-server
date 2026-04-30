@@ -11,7 +11,7 @@ src/
   engine.ts           — authorize() / verify(): dispatches to local or remote; fail-closed wrapper
   server.ts           — createServer(): registers evaluate, verify_permit, deploy_service (demo)
   index.ts            — CLI entry point; connects stdio transport
-  server.test.ts      — 22 unit tests: tools/list, evaluate (local + remote), verify_permit, deploy_service
+  server.test.ts      — 26 unit tests: tools/list, evaluate (local + remote), verify_permit, deploy_service
   integration.test.ts — Live-API tests; require ATLASENT_API_KEY + ATLASENT_BASE_URL, skip otherwise
 
 examples/
@@ -53,7 +53,7 @@ The hosted backend is a configuration swap. `authorizeRemote()` / `verifyRemote(
 
 ```bash
 npm run build             # tsc → dist/
-npm test                  # 22 unit tests, no network
+npm test                  # 26 unit tests, no network
 npm run test:integration  # live API; needs ATLASENT_API_KEY + ATLASENT_BASE_URL
 npm run demo              # end-to-end demo in local mode
 ```
@@ -71,12 +71,18 @@ Tests use `node:test` + MCP SDK's `InMemoryTransport`. `globalThis.fetch` is moc
 
 ## API contracts
 
-Hosted backend:
+Hosted backend (atlasent-api Supabase edge functions):
 
-- `POST /v1-evaluate` → `{ decision, permit_token?, reason?, audit_id?, conditions?, hold_id? }`
-- `POST /v1-verify-permit` → `{ outcome, valid, reason?, audit_id? }`
+- `POST /v1-evaluate`
+  - request: `{ action: { id }, actor: { id }, environment, context }` — `engine.ts.authorizeRemote()` packs `ActionContext.action_type`/`actor_id` into the nested `action.id`/`actor.id` shape the edge function reads, and rides `approvals` / `change_window` inside `context` so they reach the rule engine.
+  - response: `{ decision: "allow" | "deny" | "hold" | "escalate", permit?: { id, status, expires_at }, deny_reason?, evaluation_id, … }` — `permit.id` becomes `permit_token` in the MCP envelope; `evaluation_id` becomes `audit_id`. Allow without `permit.id` → fail-closed deny.
+- `POST /v1-verify-permit`
+  - request: `{ permit_token, action_type, actor_id }` — these field names are read literally by the verify handler (`atlasent-api/supabase/functions/v1-verify-permit/handler.ts`); we don't send the rest of the context.
+  - response: `{ valid: boolean, outcome: "allow" | "deny", verify_error_code?, reason? }` — only `outcome === "allow"` with `valid === true` maps to `verified`. Otherwise `verify_error_code` is mapped via the `VERIFY_ERROR_TO_OUTCOME` table in `engine.ts` (`PERMIT_EXPIRED` → `expired`, mismatches/revocations/already-used → `invalid`, auth/rate-limit/internal → `error`); unknown codes fall through to `invalid` (fail-closed).
 
-Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
+Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`. The edge function reads the bearer header for org/key resolution; mcp-server does not echo the key in the body.
+
+When the canonical contract in `atlasent-sdk/contract/schemas/` is reconciled with the deployed edge function, the adapter in `engine.ts` is the only place that needs to move — tool handlers, tests at the MCP layer, and the demo are all decoupled from the wire shape.
 
 ## npm publishing
 

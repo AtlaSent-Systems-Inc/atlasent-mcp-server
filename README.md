@@ -205,28 +205,33 @@ Every error path collapses to `{ decision: "deny" }`:
 - API unreachable → **deny**
 - Request timeout (10s) → **deny**
 - Malformed response → **deny**
-- Remote returns `allow` without a `permit_token` → **deny**
+- Remote returns `allow` without a `permit.id` → **deny**
 - Unknown/invalid decision string → **deny**
+- Verify returns an unrecognized `verify_error_code` → **invalid** (treated as not valid)
 
 The agent never proceeds without an explicit `allow`.
 
-## How the hosted backend plugs in later
+## How the hosted backend plugs in
 
 Nothing in the tool handlers changes when you move from local to remote. The `deploy_service` handler calls `authorize(ctx)`; `authorize()` reads `ATLASENT_MODE` on every call and picks the engine. Switching to the hosted backend is three env vars.
 
-The hosted API contract is already defined in `src/engine.ts` (`authorizeRemote`, `verifyRemote`):
+The remote adapter (`src/engine.ts`) speaks the AtlaSent API edge-function shape directly:
 
-- `POST /v1-evaluate` — body includes `action_type`, `actor_id`, `environment`, `approvals?`, `change_window?`
-- `POST /v1-verify-permit` — body includes `permit_token` and the same context
+- `POST /v1-evaluate`
+  - request: `{ action: { id }, actor: { id }, environment, context }` — the MCP-side `action_type` / `actor_id` are packed into `action.id` / `actor.id`; `approvals` and `change_window` ride inside `context`.
+  - response: `{ decision, permit?: { id, ... }, deny_reason?, evaluation_id, ... }` — `permit.id` is exposed to MCP hosts as `permit_token`.
+- `POST /v1-verify-permit`
+  - request: `{ permit_token, action_type, actor_id }`
+  - response: `{ valid, outcome: "allow" | "deny", verify_error_code?, reason? }` — server `outcome === "allow"` becomes `verified`; `verify_error_code` is mapped to `expired` / `invalid` / `error` and falls through to `invalid` for anything unrecognized.
 
-When the hosted backend's decision contract is finalized, the remote adapter is the only file that might need to change. Tool handlers, tests, and the demo all remain identical.
+If the canonical schemas in `atlasent-sdk/contract/schemas/` are reconciled with the deployed edge functions, the remote adapter in `engine.ts` is the only place that needs to move.
 
 ## Development
 
 ```bash
 npm install
 npm run build              # compile TypeScript
-npm test                   # 22 unit tests (local + remote mocked)
+npm test                   # 26 unit tests (local + remote mocked)
 npm run test:integration   # requires ATLASENT_API_KEY + ATLASENT_BASE_URL; skips otherwise
 npm run demo               # end-to-end authorization demo (local mode)
 ```

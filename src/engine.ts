@@ -88,77 +88,113 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 interface RawEvaluate {
   decision: string;
-  permit_token?: string;
-  reason?: string;
-  audit_id?: string;
-  conditions?: string[];
-  hold_id?: string;
+  permit?: { id: string; status?: string; expires_at?: string };
+  deny_reason?: string;
+  evaluation_id?: string;
+  // Server also returns matched_rule_id, matched_policy_id, deny_code,
+  // risk: {level, score, reasons}, evaluated_at — currently unused by
+  // mcp-server, kept on the wire for future telemetry surface.
 }
 
 async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
+  // The atlasent-api edge function (supabase/functions/v1-evaluate)
+  // reads payload.actor.id, payload.action.id, payload.context,
+  // payload.environment. Approvals/change_window aren't first-class
+  // on the wire — they ride inside `context` so the rule engine can
+  // reach them via standard policy expressions.
+  const context: Record<string, unknown> = {};
+  if (ctx.approvals !== undefined) context.approvals = ctx.approvals;
+  if (ctx.change_window !== undefined) context.change_window = ctx.change_window;
+
   const body: Record<string, unknown> = {
-    action_type: ctx.action_type,
-    actor_id: ctx.actor_id,
+    action: { id: ctx.action_type },
+    actor: { id: ctx.actor_id },
     environment: ctx.environment,
+    context,
   };
-  if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
-  if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
 
   if (data.decision === "allow") {
-    if (!data.permit_token) throw new Error("Remote allowed the action but returned no permit_token");
-    const out: Decision = { decision: "allow", permit_token: data.permit_token };
-    if (data.audit_id) out.audit_id = data.audit_id;
-    if (data.conditions?.length) out.conditions = data.conditions;
+    const permitId = data.permit?.id;
+    if (!permitId) throw new Error("Remote allowed the action but returned no permit.id");
+    const out: Decision = { decision: "allow", permit_token: permitId };
+    if (data.evaluation_id) out.audit_id = data.evaluation_id;
     return out;
   }
 
   if (data.decision === "hold" || data.decision === "escalate") {
     return {
       decision: "hold",
-      reason: data.reason ?? "Held for human review",
-      ...(data.hold_id && { hold_id: data.hold_id }),
-      ...(data.audit_id && { audit_id: data.audit_id }),
+      reason: data.deny_reason ?? "Held for human review",
+      ...(data.evaluation_id ? { audit_id: data.evaluation_id } : {}),
     };
   }
 
   // Anything else (including "deny" or an unknown decision) is fail-closed.
   return {
     decision: "deny",
-    reason: data.reason ?? `Denied (decision=${data.decision})`,
-    ...(data.audit_id && { audit_id: data.audit_id }),
+    reason: data.deny_reason ?? `Denied (decision=${data.decision})`,
+    ...(data.evaluation_id ? { audit_id: data.evaluation_id } : {}),
   };
 }
 
 interface RawVerify {
-  outcome: string;
-  valid: boolean;
+  valid?: boolean;
+  outcome?: string;             // server emits "allow" | "deny"
+  verify_error_code?: string;   // populated on outcome === "deny"
   reason?: string;
-  audit_id?: string;
 }
 
+// Map the verify-permit handler's verify_error_code (see
+// atlasent-api/supabase/functions/v1-verify-permit/handler.ts) onto the
+// four-value outcome mcp-server publishes to MCP hosts.
+const VERIFY_ERROR_TO_OUTCOME: Record<string, "expired" | "invalid" | "error"> = {
+  PERMIT_EXPIRED: "expired",
+  PERMIT_NOT_FOUND: "invalid",
+  PERMIT_NOT_ALLOWED: "invalid",
+  PERMIT_REVOKED: "invalid",
+  PERMIT_ALREADY_USED: "invalid",
+  ACTOR_MISMATCH: "invalid",
+  ACTION_TYPE_MISMATCH: "invalid",
+  MISSING_PERMIT: "invalid",
+  UNAUTHORIZED: "error",
+  INVALID_API_KEY: "error",
+  INSUFFICIENT_SCOPE: "error",
+  RATE_LIMITED: "error",
+  INTERNAL_ERROR: "error",
+};
+
 async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyResult> {
+  // Server reads body.permit_token, body.action_type, body.actor_id —
+  // see handler.ts. Other fields (environment, approvals, change_window)
+  // are not consulted by verify; we omit them to keep the wire honest.
   const body: Record<string, unknown> = {
     permit_token: token,
     action_type: ctx.action_type,
     actor_id: ctx.actor_id,
-    environment: ctx.environment,
   };
-  if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
-  if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
 
   const data = await post<RawVerify>("/v1-verify-permit", body);
 
-  const outcome =
-    data.outcome === "verified" || data.outcome === "expired" || data.outcome === "invalid"
-      ? data.outcome
-      : "error";
+  if (data.valid === true && data.outcome === "allow") {
+    return {
+      outcome: "verified",
+      valid: true,
+      ...(data.reason ? { reason: data.reason } : {}),
+    };
+  }
+
+  // Server denied or returned a non-affirmative shape — translate the
+  // verify_error_code if present, otherwise fall through to "invalid"
+  // (fail-closed: an unknown shape is never treated as success).
+  const code = data.verify_error_code;
+  const outcome: VerifyResult["outcome"] =
+    code && code in VERIFY_ERROR_TO_OUTCOME ? VERIFY_ERROR_TO_OUTCOME[code]! : "invalid";
 
   return {
     outcome,
-    valid: data.valid === true,
-    ...(data.reason && { reason: data.reason }),
-    ...(data.audit_id && { audit_id: data.audit_id }),
+    valid: false,
+    ...(data.reason ? { reason: data.reason } : {}),
   };
 }
