@@ -86,6 +86,10 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Canonical evaluate response shape (v1-evaluate/handler.ts):
+//   { decision: "allow"|"deny"|"hold"|"escalate",
+//     permit_token?: string, request_id?: string, expires_at?: string,
+//     denial?: { reason: string, code: string } }
 interface RawEvaluate {
   decision: string;
   permit_token?: string;
@@ -131,11 +135,14 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   };
 }
 
+// Canonical verify-permit response shape (v1-verify-permit/handler.ts):
+//   { valid: boolean, outcome: "allow"|"deny",
+//     verify_error_code?: string, reason?: string }
 interface RawVerify {
-  outcome: string;
   valid: boolean;
+  outcome: "allow" | "deny";
+  verify_error_code?: string;
   reason?: string;
-  audit_id?: string;
 }
 
 async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyResult> {
@@ -143,22 +150,18 @@ async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyRe
     permit_token: token,
     action_type: ctx.action_type,
     actor_id: ctx.actor_id,
-    environment: ctx.environment,
   };
-  if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
-  if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
 
   const data = await post<RawVerify>("/v1-verify-permit", body);
 
-  const outcome =
-    data.outcome === "verified" || data.outcome === "expired" || data.outcome === "invalid"
-      ? data.outcome
-      : "error";
+  // Map the canonical "allow"|"deny" outcome to the internal VerifyResult
+  // outcome vocabulary used across both local and remote paths.
+  const outcome: VerifyResult["outcome"] = data.outcome === "allow" ? "verified" : "invalid";
 
   return {
     outcome,
     valid: data.valid === true,
     ...(data.reason && { reason: data.reason }),
-    ...(data.audit_id && { audit_id: data.audit_id }),
+    ...(data.verify_error_code && { verify_error_code: data.verify_error_code }),
   };
 }
