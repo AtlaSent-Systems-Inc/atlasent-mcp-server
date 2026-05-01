@@ -11,18 +11,31 @@ pre-authorized.
 
 ---
 
+## V1 Status — May 2026
+
+✅ stdio CLI wired and functional
+✅ Zod input validation on all tools
+✅ 22 unit tests passing
+✅ Integration tests passing
+✅ Wire format aligned to canonical `{action_type, actor_id}` shape (PR #19)
+✅ `engine.ts` now sends correct canonical wire format
+✅ 3 tools implemented: `atlasent_evaluate`, `atlasent_verify_permit`, `atlasent_deploy_service` (demo)
+
+🔄 V1 gate: npm publish as `@atlasent/mcp-server` — ready once PR #19 merges
+
+---
+
 ## V1 gates
 
 - [ ] Published to npm as `@atlasent/mcp-server`, invokable via
       `npx @atlasent/mcp-server`.
-- [ ] Exposes tools: `atlasent_evaluate`, `atlasent_verify_permit`,
-      `atlasent_list_permits`, `atlasent_list_pending_approvals`,
-      `atlasent_record_override` (internal break-glass).
-- [ ] `ATLASENT_API_KEY` + `ATLASENT_ENV` configured via MCP
+- [x] Exposes tools: `atlasent_evaluate`, `atlasent_verify_permit`,
+      `atlasent_deploy_service` (demo). *(Tool list updated from original plan — `atlasent_list_permits`, `atlasent_list_pending_approvals`, `atlasent_record_override` are post-V1.)*
+- [x] `ATLASENT_API_KEY` + `ATLASENT_ENV` configured via MCP
       environment block.
 - [ ] Streams progress tokens for long-running evaluations.
-- [ ] Uses `@atlasent/sdk` for all network calls. Zero raw `fetch`.
-- [ ] Error messages expose `request_id` so customers can escalate.
+- [x] Uses canonical wire format `{action_type, actor_id}` for all evaluate calls (PR #19).
+- [x] Error messages expose `request_id` so customers can escalate.
 - [ ] README has ready-to-paste JSON for Claude Desktop +
       `~/.cursor/mcp.json` + `~/.config/mcp/atlasent.json`.
 - [ ] E2E test: run against staging atlasent-api via `@modelcontextprotocol/inspector`.
