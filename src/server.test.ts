@@ -306,6 +306,37 @@ describe("verify_permit (local mode)", () => {
     assert.equal(data.valid, false);
     assert.equal(result.isError, true);
   });
+
+  it("rejects a replay of an already-verified local permit", async () => {
+    forceLocalMode();
+    const { client } = await setup();
+
+    const authzResult = await client.callTool({
+      name: "evaluate",
+      arguments: { ...EVAL_ARGS, approvals: ["ok"] },
+    });
+    const authz = parseResult(authzResult);
+    assert.equal(authz.decision, "allow");
+    const token = authz.permit_token as string;
+
+    const first = parseResult(
+      await client.callTool({
+        name: "verify_permit",
+        arguments: { ...EVAL_ARGS, permit_token: token },
+      }),
+    );
+    assert.equal(first.outcome, "verified");
+    assert.equal(first.valid, true);
+
+    const second = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: token },
+    });
+    const replay = parseResult(second);
+    assert.equal(replay.outcome, "invalid");
+    assert.equal(replay.valid, false);
+    assert.match(String(replay.reason ?? ""), /already used/i);
+  });
 });
 
 describe("verify_permit (remote mode)", () => {
