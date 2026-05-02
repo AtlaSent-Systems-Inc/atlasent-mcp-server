@@ -55,10 +55,116 @@ const changeWindow = z
   .optional()
   .describe("ISO-8601 time window during which the change is permitted (e.g. 2025-01-15T02:00:00Z/PT4H).");
 
+// Fields we'll keep verbatim in the structured stderr log. Anything
+// not on the allowlist is either dropped (sensitive) or hashed-and-
+// truncated (correlatable but not reversible). The audit flagged
+// raw `actor_id` / `action_type` flowing into stderr — mostly safe
+// for self-hosted MCP, but a shared log aggregator could surface
+// per-user behaviour of the calling agent. See SECURITY_PLAN.md
+// (atlasent-mcp-server LOW: stderr log redaction).
+const LOG_SAFE_TOP_LEVEL_KEYS = new Set([
+  "ts",
+  "event",
+  "mode",
+  "decision",      // allow/deny/hold/error — the security-relevant bit
+  "outcome",       // verify outcome — same shape, public
+  "audit_id",      // correlation only, no user material
+  "permit_token",  // already opaque
+  "duration_ms",
+]);
+
+function _hashShort(s: string): string {
+  // Cheap deterministic shortening — not crypto, just stable enough
+  // that a log analyst can correlate two events for the same actor
+  // without seeing the actor's identifier verbatim.
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+function _redact(value: unknown): unknown {
+  if (value == null) return value;
+  if (typeof value === "string") {
+    if (value.length === 0) return value;
+    if (value.length <= 8) return `len=${value.length}`;
+    return `h:${_hashShort(value)}:len=${value.length}`;
+  }
+  if (Array.isArray(value)) {
+    return { _kind: "array", count: value.length };
+  }
+  if (typeof value === "object") {
+    return { _kind: "object", keys: Object.keys(value as object).length };
+  }
+  return value;
+}
+
 function log(event: string, data: Record<string, unknown>): void {
   // Log to stderr so we don't interfere with MCP stdio messaging.
-  const line = JSON.stringify({ ts: new Date().toISOString(), event, mode: getMode(), ...data });
+  const safe: Record<string, unknown> = {
+    ts: new Date().toISOString(),
+    event,
+    mode: getMode(),
+  };
+  for (const [key, value] of Object.entries(data)) {
+    if (LOG_SAFE_TOP_LEVEL_KEYS.has(key)) {
+      safe[key] = value;
+      continue;
+    }
+    if (key === "ctx" && value && typeof value === "object") {
+      // Only the action_type is preserved as a low-cardinality string
+      // (it comes from a controlled vocabulary of policy actions);
+      // other context fields are redacted.
+      const ctx = value as Record<string, unknown>;
+      safe.ctx = {
+        action_type:
+          typeof ctx.action_type === "string" && ctx.action_type.length <= 64
+            ? ctx.action_type
+            : _redact(ctx.action_type),
+        actor_id: _redact(ctx.actor_id),
+        environment: _redact(ctx.environment),
+        approvals: _redact(ctx.approvals),
+        change_window: _redact(ctx.change_window),
+      };
+      continue;
+    }
+    safe[key] = _redact(value);
+  }
+  const line = JSON.stringify(safe);
   process.stderr.write(line + "\n");
+}
+
+// Per-tool token bucket. Caps the calls-per-second any single tool
+// handler can sustain — protects the upstream policy engine from a
+// runaway agent loop, and the local mode from busywork. Tunable via
+// ATLASENT_MCP_RATE_LIMIT (calls per minute, default 600).
+const _rateLimitState: Map<string, { tokens: number; updatedAt: number }> =
+  new Map();
+
+function _rateLimitPerMinute(): number {
+  const raw = process.env.ATLASENT_MCP_RATE_LIMIT;
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 600;
+}
+
+export function _resetRateLimitForTests(): void {
+  _rateLimitState.clear();
+}
+
+function rateLimitOk(toolName: string): boolean {
+  const max = _rateLimitPerMinute();
+  const refillPerMs = max / 60_000;
+  const now = Date.now();
+  const state = _rateLimitState.get(toolName) ?? { tokens: max, updatedAt: now };
+  const elapsed = now - state.updatedAt;
+  const refilled = Math.min(max, state.tokens + elapsed * refillPerMs);
+  if (refilled < 1) {
+    _rateLimitState.set(toolName, { tokens: refilled, updatedAt: now });
+    return false;
+  }
+  _rateLimitState.set(toolName, { tokens: refilled - 1, updatedAt: now });
+  return true;
 }
 
 export function createServer(): McpServer {
@@ -93,6 +199,14 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
+      if (!rateLimitOk("evaluate")) {
+        const decision = {
+          decision: "deny" as const,
+          reason: "MCP tool rate limit exceeded — slow down and retry",
+        };
+        log("evaluate.rate_limited", { decision });
+        return toolResult(decision);
+      }
       const ctx: ActionContext = {
         action_type: args.action_type,
         actor_id: args.actor_id,
@@ -138,6 +252,15 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
+      if (!rateLimitOk("verify_permit")) {
+        const result = {
+          outcome: "error" as const,
+          valid: false,
+          reason: "MCP tool rate limit exceeded — slow down and retry",
+        };
+        log("verify_permit.rate_limited", { result });
+        return toolResult(result);
+      }
       const ctx: ActionContext = {
         action_type: args.action_type,
         actor_id: args.actor_id,
@@ -191,6 +314,14 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
+      if (!rateLimitOk("deploy_service")) {
+        const decision = {
+          decision: "deny" as const,
+          reason: "MCP tool rate limit exceeded — slow down and retry",
+        };
+        log("deploy_service.rate_limited", { decision });
+        return toolResult(decision);
+      }
       const ctx: ActionContext = {
         action_type: "deploy",
         actor_id: args.actor_id,

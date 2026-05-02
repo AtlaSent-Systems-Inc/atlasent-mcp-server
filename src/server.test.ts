@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer } from "./server.js";
+import { createServer, _resetRateLimitForTests } from "./server.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -63,6 +63,8 @@ let originalFetch: typeof globalThis.fetch;
 
 beforeEach(() => {
   originalFetch = globalThis.fetch;
+  _resetRateLimitForTests();
+  delete process.env.ATLASENT_MCP_RATE_LIMIT;
 });
 
 afterEach(() => {
@@ -537,5 +539,29 @@ describe("deploy_service (authorization-gated)", () => {
     const data = parseResult(result);
     assert.equal(data.decision, "deny");
     assert.equal(data.result, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+describe("rate limiting (per-tool token bucket)", () => {
+  it("denies the burst that exceeds ATLASENT_MCP_RATE_LIMIT", async () => {
+    forceLocalMode();
+    process.env.ATLASENT_MCP_RATE_LIMIT = "2";
+    _resetRateLimitForTests();
+    const { client } = await setup();
+
+    const args = { ...EVAL_ARGS, approvals: ["x"] };
+    const r1 = parseResult(await client.callTool({ name: "evaluate", arguments: args }));
+    const r2 = parseResult(await client.callTool({ name: "evaluate", arguments: args }));
+    const r3 = parseResult(await client.callTool({ name: "evaluate", arguments: args }));
+
+    assert.equal(r1.decision, "allow");
+    assert.equal(r2.decision, "allow");
+    // Third call (within the same minute) trips the limiter.
+    assert.equal(r3.decision, "deny");
+    assert.match(String(r3.reason ?? ""), /rate limit/i);
   });
 });
