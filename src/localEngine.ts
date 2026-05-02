@@ -12,13 +12,40 @@
  *   3. otherwise                              → allow
  */
 
+import { randomUUID } from "node:crypto";
+
 import type { ActionContext, Decision, VerifyResult } from "./decision.js";
 
 const DESTRUCTIVE_KEYWORDS = ["delete", "drop", "destroy", "truncate", "rm", "purge", "wipe"];
 const PERMIT_TTL_MS = 5 * 60 * 1000;
 
+// In-memory single-use tracking. Local mode is single-process, so a
+// Set is sufficient — production parity for "permits are consumed on
+// verify" lives in the hosted backend. Without this, the same local
+// token verified twice would both succeed, hiding replay bugs that
+// only surface in remote mode.
+const CONSUMED_TOKENS = new Set<string>();
+
+// Cap the consumed-tokens set to bound memory in long-running dev
+// sessions. Any entry older than this is no longer reachable as a
+// valid permit anyway (PERMIT_TTL_MS is shorter), so dropping it on
+// overflow doesn't change correctness.
+const CONSUMED_CAP = 10_000;
+
+function rememberConsumed(token: string): void {
+  if (CONSUMED_TOKENS.size >= CONSUMED_CAP) {
+    // Drop the oldest insertion order entry — Set preserves it.
+    const first = CONSUMED_TOKENS.values().next().value;
+    if (first) CONSUMED_TOKENS.delete(first);
+  }
+  CONSUMED_TOKENS.add(token);
+}
+
 function shortId(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  // randomUUID is CSPRNG-backed; the timestamp prefix is kept so
+  // verifyLocal can still TTL-check based on issue time without a
+  // separate side-table.
+  return `${prefix}_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
 }
 
 function isDestructive(action: string): boolean {
@@ -59,6 +86,9 @@ export function authorizeLocal(ctx: ActionContext): Decision {
 /**
  * Verify a locally-issued permit token.
  * Local tokens encode a base36 timestamp — we use that to check TTL.
+ * Tokens are single-use: a successful verify marks the token consumed,
+ * so a second verify of the same token returns `invalid` (mirrors the
+ * hosted backend's PERMIT_ALREADY_USED behaviour).
  */
 export function verifyLocal(token: string, _ctx: ActionContext): VerifyResult {
   const audit_id = shortId("aud_local");
@@ -86,5 +116,21 @@ export function verifyLocal(token: string, _ctx: ActionContext): VerifyResult {
     };
   }
 
+  if (CONSUMED_TOKENS.has(token)) {
+    return {
+      outcome: "invalid",
+      valid: false,
+      reason: "Local permit already used",
+      audit_id,
+    };
+  }
+
+  rememberConsumed(token);
   return { outcome: "verified", valid: true, audit_id };
+}
+
+// Test-only hook so the unit suite can guarantee a clean slate between
+// cases. Not exported from the package (no entry in dist's barrel).
+export function _resetLocalEngineForTests(): void {
+  CONSUMED_TOKENS.clear();
 }

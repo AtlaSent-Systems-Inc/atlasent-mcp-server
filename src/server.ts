@@ -18,21 +18,40 @@ import { authorize, verify, getMode } from "./engine.js";
 
 export const VERSION = "1.0.0";
 
+// Bounds protect the upstream policy engine and the local rule engine
+// from a misbehaving / adversarial caller (e.g. an injected prompt that
+// tells the model to send a megabyte-long approvals array). Limits are
+// generous for legitimate use but cap the worst case.
+const MAX_FIELD_LEN = 256;
+const MAX_APPROVALS = 16;
+
 const actionType = z
   .string()
+  .min(1)
+  .max(MAX_FIELD_LEN)
+  .regex(
+    /^[A-Za-z0-9_.\-:]+$/,
+    "action_type must be lowercase identifier characters (A-Z, a-z, 0-9, _ . - :)",
+  )
   .describe("The action the agent is about to perform (e.g. deploy, delete, merge, execute_query, send_email).");
 const actorId = z
   .string()
+  .min(1)
+  .max(MAX_FIELD_LEN)
   .describe("Identifier for the user or service account the agent is acting on behalf of.");
 const environment = z
   .string()
+  .min(1)
+  .max(MAX_FIELD_LEN)
   .describe("Target environment for the action (e.g. production, staging, development).");
 const approvals = z
-  .array(z.string())
+  .array(z.string().min(1).max(MAX_FIELD_LEN))
+  .max(MAX_APPROVALS)
   .optional()
   .describe("Approval identifiers already obtained for this action (e.g. ticket IDs, reviewer handles).");
 const changeWindow = z
   .string()
+  .max(MAX_FIELD_LEN)
   .optional()
   .describe("ISO-8601 time window during which the change is permitted (e.g. 2025-01-15T02:00:00Z/PT4H).");
 
@@ -100,7 +119,11 @@ export function createServer(): McpServer {
         "`invalid`, or `error`. If `valid` is false, the action should be flagged " +
         "for review.",
       inputSchema: z.object({
-        permit_token: z.string().describe("The permit_token returned by a prior evaluate call."),
+        permit_token: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("The permit_token returned by a prior evaluate call."),
         action_type: actionType,
         actor_id: actorId,
         environment,
@@ -150,7 +173,11 @@ export function createServer(): McpServer {
         "deploy runs. Denied or held calls are blocked and never touch the target " +
         "system. On allow, the deploy executes and a permit_token is returned.",
       inputSchema: z.object({
-        service_name: z.string().describe("Name of the service to deploy."),
+        service_name: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Name of the service to deploy."),
         environment,
         actor_id: actorId,
         approvals,
