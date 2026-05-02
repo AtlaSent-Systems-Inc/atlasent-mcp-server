@@ -177,44 +177,60 @@ describe("evaluate (remote mode)", () => {
     globalThis.fetch = mockFetch({
       decision: "allow",
       permit_token: "pt_xyz",
-      audit_id: "aud_1",
+      request_id: "req_1",
+      expires_at: "2026-01-01T01:00:00Z",
     });
     const { client } = await setup();
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "allow");
     assert.equal(data.permit_token, "pt_xyz");
-    assert.equal(data.audit_id, "aud_1");
+    assert.equal(data.audit_id, "req_1");
   });
 
   it("normalizes escalate to hold", async () => {
     forceRemoteMode();
     globalThis.fetch = mockFetch({
       decision: "escalate",
-      reason: "needs SRE review",
-      hold_id: "hold_1",
+      denial: { reason: "needs SRE review", code: "REQUIRES_OVERRIDE" },
+      request_id: "req_2",
     });
     const { client } = await setup();
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "hold");
-    assert.equal(data.hold_id, "hold_1");
+    assert.equal(data.reason, "needs SRE review");
+    assert.equal(data.audit_id, "req_2");
     assert.equal(result.isError, true);
   });
 
-  it("sends correct auth headers", async () => {
+  it("sends flat handler.ts body and correct auth headers", async () => {
     forceRemoteMode();
     process.env.ATLASENT_ANON_KEY = "test-anon";
     const fetcher = mockFetch({ decision: "allow", permit_token: "pt_1" });
     globalThis.fetch = fetcher;
     const { client } = await setup();
-    await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    await client.callTool({
+      name: "evaluate",
+      arguments: { ...EVAL_ARGS, approvals: ["t-1"], change_window: "win-1" },
+    });
 
     const init = fetcher.mock.calls[0].arguments[1] as RequestInit;
     const headers = init.headers as Record<string, string>;
     assert.equal(headers["Authorization"], "Bearer test-key");
     assert.equal(headers["x-anon-key"], "test-anon");
     assert.ok(headers["User-Agent"].startsWith("@atlasent/mcp-server/"));
+
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    assert.equal(body.action_type, "deploy");
+    assert.equal(body.actor_id, "user-1");
+    assert.deepEqual(body.context, {
+      environment: "production",
+      approvals: ["t-1"],
+      change_window: "win-1",
+    });
+    // No top-level `environment` — handler.ts derives it from the API key.
+    assert.equal(body.environment, undefined);
   });
 
   it("denies on HTTP 500 (fail-closed)", async () => {
@@ -293,9 +309,9 @@ describe("verify_permit (local mode)", () => {
 });
 
 describe("verify_permit (remote mode)", () => {
-  it("returns outcome and valid on success", async () => {
+  it("maps server allow → verified", async () => {
     forceRemoteMode();
-    globalThis.fetch = mockFetch({ outcome: "verified", valid: true, audit_id: "aud_1" });
+    globalThis.fetch = mockFetch({ valid: true, outcome: "allow", decision: "allow" });
     const { client } = await setup();
     const result = await client.callTool({
       name: "verify_permit",
@@ -304,6 +320,81 @@ describe("verify_permit (remote mode)", () => {
     const data = parseResult(result);
     assert.equal(data.outcome, "verified");
     assert.equal(data.valid, true);
+  });
+
+  it("maps PERMIT_EXPIRED → expired", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      valid: false,
+      outcome: "deny",
+      verify_error_code: "PERMIT_EXPIRED",
+      reason: "Permit expired at 2026-01-01T00:15:00Z",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: "pt_abc" },
+    });
+    const data = parseResult(result);
+    assert.equal(data.outcome, "expired");
+    assert.equal(data.valid, false);
+    assert.equal(result.isError, true);
+  });
+
+  it("maps PERMIT_ALREADY_USED → invalid", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      valid: false,
+      outcome: "deny",
+      verify_error_code: "PERMIT_ALREADY_USED",
+      reason: "This permit token has already been consumed",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: "pt_abc" },
+    });
+    const data = parseResult(result);
+    assert.equal(data.outcome, "invalid");
+    assert.equal(data.valid, false);
+  });
+
+  it("maps RATE_LIMITED → error", async () => {
+    forceRemoteMode();
+    // Server returns 200 here because the verify handler emits its own
+    // body for rate-limited responses (status 429 with JSON body).
+    // Using mockFetch at status 200 simulates the JSON body parse path.
+    globalThis.fetch = mockFetch({
+      valid: false,
+      outcome: "deny",
+      verify_error_code: "RATE_LIMITED",
+      reason: "Too many requests",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: "pt_abc" },
+    });
+    const data = parseResult(result);
+    assert.equal(data.outcome, "error");
+    assert.equal(data.valid, false);
+  });
+
+  it("falls through to invalid on unknown verify_error_code", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      valid: false,
+      outcome: "deny",
+      verify_error_code: "SOMETHING_NEW",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: "pt_abc" },
+    });
+    const data = parseResult(result);
+    assert.equal(data.outcome, "invalid");
+    assert.equal(data.valid, false);
   });
 
   it("returns error outcome on network failure", async () => {
