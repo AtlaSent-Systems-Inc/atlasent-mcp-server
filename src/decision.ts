@@ -40,6 +40,7 @@ export type VerifyResult = {
   outcome: "verified" | "expired" | "invalid" | "error";
   valid: boolean;
   reason?: string;
+  verify_error_code?: string;
   audit_id?: string;
 };
 
