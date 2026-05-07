@@ -86,94 +86,66 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Canonical evaluate response shape (v1-evaluate/handler.ts):
+//   { decision: "allow"|"deny"|"hold"|"escalate",
+//     permit_token?: string, request_id?: string, expires_at?: string,
+//     denial?: { reason: string, code: string } }
 interface RawEvaluate {
   decision: string;
   permit_token?: string;
-  request_id?: string;
-  expires_at?: string;
-  denial?: { reason?: string; code?: string };
-  // Server also returns mode, cache_hit, evaluation_ms, decisionObject,
-  // outcome_kind, intent_match, audit_entry_hash, etc. — surfaced on
-  // the wire for future telemetry; not consumed by mcp-server today.
+  reason?: string;
+  audit_id?: string;
+  conditions?: string[];
+  hold_id?: string;
 }
 
 async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
-  // Wire shape per atlasent-api/supabase/functions/v1-evaluate/handler.ts:
-  //   - top-level required: action_type, actor_id
-  //   - top-level optional: request_id, shadow, explain, traceparent,
-  //     authority_scope, state_snapshot, dependency_permit_token_hashes,
-  //     signal_window_seconds, pressure_window_seconds, intent, source_system, cdo
-  //   - `context` is an opaque record the rule engine sees verbatim
-  //
-  // `environment` is NOT a top-level field — handler.ts derives it from
-  // the API key (`keyEnvironment`). We include it inside `context` so
-  // policy expressions that condition on environment still resolve.
-  // approvals / change_window ride in `context` for the same reason.
-  const context: Record<string, unknown> = { environment: ctx.environment };
-  if (ctx.approvals !== undefined) context.approvals = ctx.approvals;
-  if (ctx.change_window !== undefined) context.change_window = ctx.change_window;
-
   const body: Record<string, unknown> = {
     action_type: ctx.action_type,
     actor_id: ctx.actor_id,
-    context,
+    environment: ctx.environment,
   };
+  if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
+  if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
 
   if (data.decision === "allow") {
     if (!data.permit_token) throw new Error("Remote allowed the action but returned no permit_token");
     const out: Decision = { decision: "allow", permit_token: data.permit_token };
-    if (data.request_id) out.audit_id = data.request_id;
+    if (data.audit_id) out.audit_id = data.audit_id;
+    if (data.conditions?.length) out.conditions = data.conditions;
     return out;
   }
 
   if (data.decision === "hold" || data.decision === "escalate") {
     return {
       decision: "hold",
-      reason: data.denial?.reason ?? "Held for human review",
-      ...(data.request_id ? { audit_id: data.request_id } : {}),
+      reason: data.reason ?? "Held for human review",
+      ...(data.hold_id && { hold_id: data.hold_id }),
+      ...(data.audit_id && { audit_id: data.audit_id }),
     };
   }
 
   // Anything else (including "deny" or an unknown decision) is fail-closed.
   return {
     decision: "deny",
-    reason: data.denial?.reason ?? `Denied (decision=${data.decision})`,
-    ...(data.request_id ? { audit_id: data.request_id } : {}),
+    reason: data.reason ?? `Denied (decision=${data.decision})`,
+    ...(data.audit_id && { audit_id: data.audit_id }),
   };
 }
 
+// Canonical verify-permit response shape (v1-verify-permit/handler.ts):
+//   { valid: boolean, outcome: "allow"|"deny",
+//     verify_error_code?: string, reason?: string }
 interface RawVerify {
-  valid?: boolean;
-  outcome?: string;             // server emits "allow" | "deny"
-  verify_error_code?: string;   // populated on outcome === "deny"
+  valid: boolean;
+  outcome: "allow" | "deny";
+  verify_error_code?: string;
   reason?: string;
 }
 
-// Map the verify-permit handler's verify_error_code (see
-// atlasent-api/supabase/functions/v1-verify-permit/handler.ts) onto the
-// four-value outcome mcp-server publishes to MCP hosts.
-const VERIFY_ERROR_TO_OUTCOME: Record<string, "expired" | "invalid" | "error"> = {
-  PERMIT_EXPIRED: "expired",
-  PERMIT_NOT_FOUND: "invalid",
-  PERMIT_NOT_ALLOWED: "invalid",
-  PERMIT_REVOKED: "invalid",
-  PERMIT_ALREADY_USED: "invalid",
-  ACTOR_MISMATCH: "invalid",
-  ACTION_TYPE_MISMATCH: "invalid",
-  MISSING_PERMIT: "invalid",
-  UNAUTHORIZED: "error",
-  INVALID_API_KEY: "error",
-  INSUFFICIENT_SCOPE: "error",
-  RATE_LIMITED: "error",
-  INTERNAL_ERROR: "error",
-};
-
 async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyResult> {
-  // Server reads body.permit_token, body.action_type, body.actor_id —
-  // see handler.ts. Other fields (environment, approvals, change_window)
-  // are not consulted by verify; we omit them to keep the wire honest.
   const body: Record<string, unknown> = {
     permit_token: token,
     action_type: ctx.action_type,
@@ -182,24 +154,14 @@ async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyRe
 
   const data = await post<RawVerify>("/v1-verify-permit", body);
 
-  if (data.valid === true && data.outcome === "allow") {
-    return {
-      outcome: "verified",
-      valid: true,
-      ...(data.reason ? { reason: data.reason } : {}),
-    };
-  }
-
-  // Server denied or returned a non-affirmative shape — translate the
-  // verify_error_code if present, otherwise fall through to "invalid"
-  // (fail-closed: an unknown shape is never treated as success).
-  const code = data.verify_error_code;
-  const outcome: VerifyResult["outcome"] =
-    code && code in VERIFY_ERROR_TO_OUTCOME ? VERIFY_ERROR_TO_OUTCOME[code]! : "invalid";
+  // Map the canonical "allow"|"deny" outcome to the internal VerifyResult
+  // outcome vocabulary used across both local and remote paths.
+  const outcome: VerifyResult["outcome"] = data.outcome === "allow" ? "verified" : "invalid";
 
   return {
     outcome,
-    valid: false,
-    ...(data.reason ? { reason: data.reason } : {}),
+    valid: data.valid === true,
+    ...(data.reason && { reason: data.reason }),
+    ...(data.verify_error_code && { verify_error_code: data.verify_error_code }),
   };
 }
