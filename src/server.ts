@@ -14,7 +14,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { toolResult, type ActionContext } from "./decision.js";
-import { authorize, verify, getMode } from "./engine.js";
+import {
+  authorize,
+  verify,
+  getMode,
+  evaluateAction,
+  listPolicies,
+  getPolicy,
+  listAuditEvents,
+} from "./engine.js";
 
 export const VERSION = "1.0.0";
 
@@ -350,6 +358,259 @@ export function createServer(): McpServer {
       log("deploy_service.executed", { service: args.service_name, permit_token: decision.permit_token, result });
 
       return toolResult(decision, { result });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_evaluate — evaluate an action against AtlaSent policies
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "atlasent_evaluate",
+    {
+      title: "AtlaSent — Evaluate Action (v1)",
+      description:
+        "Evaluate an action against AtlaSent policies. Returns a decision " +
+        "(allow/deny/hold/escalate) and a permit token if allowed.",
+      inputSchema: z.object({
+        subject: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Who is performing the action (user ID, service name)."),
+        action: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("What action is being performed (e.g. 'deploy:production', 'records:delete')."),
+        resource: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("What resource is being acted on (e.g. 'env:prod', 'table:patients')."),
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID."),
+        context: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe("Additional key/value context for policy evaluation."),
+      }),
+      annotations: {
+        title: "AtlaSent — Evaluate Action (v1)",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_evaluate")) {
+        const decision = {
+          decision: "deny" as const,
+          reason: "MCP tool rate limit exceeded — slow down and retry",
+        };
+        log("atlasent_evaluate.rate_limited", { decision });
+        return toolResult(decision);
+      }
+      try {
+        const result = await evaluateAction({
+          subject: args.subject,
+          action: args.action,
+          resource: args.resource,
+          org_id: args.org_id,
+          context: args.context as Record<string, unknown> | undefined,
+        });
+        log("atlasent_evaluate", { decision: result.decision });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+          ...(result.decision !== "allow" ? { isError: true } : {}),
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("atlasent_evaluate.error", { error: msg });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: msg }) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_list_policies — list all policies for an organization
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "atlasent_list_policies",
+    {
+      title: "AtlaSent — List Policies",
+      description: "List all policies for an organization.",
+      inputSchema: z.object({
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID."),
+        status: z
+          .enum(["draft", "shadow", "enforce"])
+          .optional()
+          .describe("Filter by policy status: 'draft', 'shadow', or 'enforce'."),
+      }),
+      annotations: {
+        title: "AtlaSent — List Policies",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_list_policies")) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "MCP tool rate limit exceeded — slow down and retry" }) }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await listPolicies({ org_id: args.org_id, status: args.status });
+        log("atlasent_list_policies", {});
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("atlasent_list_policies.error", { error: msg });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: msg }) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_get_policy — get a single policy by ID
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "atlasent_get_policy",
+    {
+      title: "AtlaSent — Get Policy",
+      description: "Get a single policy by ID.",
+      inputSchema: z.object({
+        policy_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Policy ID."),
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID."),
+      }),
+      annotations: {
+        title: "AtlaSent — Get Policy",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_get_policy")) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "MCP tool rate limit exceeded — slow down and retry" }) }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await getPolicy({ policy_id: args.policy_id, org_id: args.org_id });
+        log("atlasent_get_policy", {});
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("atlasent_get_policy.error", { error: msg });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: msg }) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_list_audit_events — query the audit event log
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "atlasent_list_audit_events",
+    {
+      title: "AtlaSent — List Audit Events",
+      description:
+        "Query the audit event log. Use to verify that an evaluation was recorded, " +
+        "or to investigate recent decisions.",
+      inputSchema: z.object({
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID."),
+        evaluation_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Filter to a specific evaluation ID."),
+        from: z
+          .string()
+          .optional()
+          .describe("Start of time range (ISO 8601 datetime)."),
+        to: z
+          .string()
+          .optional()
+          .describe("End of time range (ISO 8601 datetime)."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .default(20)
+          .optional()
+          .describe("Maximum number of events to return (default 20, max 100)."),
+      }),
+      annotations: {
+        title: "AtlaSent — List Audit Events",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_list_audit_events")) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "MCP tool rate limit exceeded — slow down and retry" }) }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await listAuditEvents({
+          org_id: args.org_id,
+          evaluation_id: args.evaluation_id,
+          from: args.from,
+          to: args.to,
+          limit: args.limit ?? 20,
+        });
+        log("atlasent_list_audit_events", {});
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("atlasent_list_audit_events.error", { error: msg });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: msg }) }],
+          isError: true,
+        };
+      }
     },
   );
 
