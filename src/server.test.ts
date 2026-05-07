@@ -81,7 +81,15 @@ describe("tools/list", () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["deploy_service", "evaluate", "verify_permit"]);
+    assert.deepEqual(names, [
+      "atlasent_evaluate",
+      "atlasent_get_policy",
+      "atlasent_list_audit_events",
+      "atlasent_list_policies",
+      "deploy_service",
+      "evaluate",
+      "verify_permit",
+    ]);
   });
 
   it("deploy_service requires service_name, environment, actor_id", async () => {

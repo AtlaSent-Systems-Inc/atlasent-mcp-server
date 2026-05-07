@@ -47,7 +47,69 @@ ATLASENT_MODE=remote \
 
 ## Tools
 
-### `evaluate` — for agents that gate themselves
+### `atlasent_evaluate` — evaluate an action against AtlaSent policies
+
+Evaluate whether a subject is permitted to perform an action on a resource. Returns a `decision` (`allow`/`deny`/`hold`/`escalate`), a `permit_token` if allowed, an `evaluation_id`, and an optional `reason`.
+
+```
+Input:  { subject, action, resource, org_id, context? }
+Output: { decision, permit_token?, evaluation_id?, reason?, ... }
+```
+
+**Example:**
+```json
+{
+  "subject": "user:alice",
+  "action": "deploy:production",
+  "resource": "env:prod",
+  "org_id": "org_abc123",
+  "context": { "ip": "10.0.0.1" }
+}
+```
+
+### `atlasent_list_policies` — list all policies for an organization
+
+Returns all policies for the given org, optionally filtered by status.
+
+```
+Input:  { org_id, status? }   (status: "draft" | "shadow" | "enforce")
+Output: array of policy objects
+```
+
+**Example:** `{ "org_id": "org_abc123", "status": "enforce" }`
+
+### `atlasent_get_policy` — get a single policy by ID
+
+Fetches the full policy definition for a given `policy_id`.
+
+```
+Input:  { policy_id, org_id }
+Output: policy object
+```
+
+**Example:** `{ "policy_id": "pol_xyz789", "org_id": "org_abc123" }`
+
+### `atlasent_list_audit_events` — query the audit event log
+
+Query recent evaluation decisions. Use to verify that an evaluation was recorded or to investigate a sequence of decisions.
+
+```
+Input:  { org_id, evaluation_id?, from?, to?, limit? }
+        (from/to: ISO 8601; limit: 1–100, default 20)
+Output: array of audit event objects
+```
+
+**Example:**
+```json
+{
+  "org_id": "org_abc123",
+  "from": "2025-01-01T00:00:00Z",
+  "to": "2025-01-02T00:00:00Z",
+  "limit": 50
+}
+```
+
+### `evaluate` — for agents that gate themselves (local/remote mode)
 
 The agent calls `evaluate` before any sensitive action and respects the decision.
 

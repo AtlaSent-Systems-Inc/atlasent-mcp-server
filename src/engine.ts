@@ -72,6 +72,21 @@ function baseUrl(): string {
   return (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.com").replace(/\/+$/, "");
 }
 
+function handleHttpError(status: number, body: string): never {
+  if (status === 401) throw new Error("Authentication failed — check your ATLASENT_API_KEY");
+  if (status === 403) throw new Error("Permission denied — your key lacks the required scope");
+  if (status === 429) throw new Error("Rate limited — back off and retry");
+  // Try to surface { error, message } from the body
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const errMsg = parsed.message ?? parsed.error ?? body;
+    throw new Error(`AtlaSent API ${status}: ${errMsg}`);
+  } catch (e) {
+    if (e instanceof SyntaxError) throw new Error(`AtlaSent API ${status}: ${body}`);
+    throw e;
+  }
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${baseUrl()}${path}`, {
     method: "POST",
@@ -81,7 +96,28 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`AtlaSent API ${res.status}: ${text}`);
+    handleHttpError(res.status, text);
+  }
+  return (await res.json()) as T;
+}
+
+async function get<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
+  let url = `${baseUrl()}${path}`;
+  if (params) {
+    const qs = Object.entries(params)
+      .filter(([, v]) => v !== undefined && v !== "")
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v as string)}`)
+      .join("&");
+    if (qs) url += `?${qs}`;
+  }
+  const res = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    handleHttpError(res.status, text);
   }
   return (await res.json()) as T;
 }
@@ -164,4 +200,78 @@ async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyRe
     ...(data.reason && { reason: data.reason }),
     ...(data.verify_error_code && { verify_error_code: data.verify_error_code }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// New standalone API calls (atlasent_evaluate, list_policies, get_policy,
+// list_audit_events) — these speak to /v1/* REST endpoints and return the
+// raw API response; no local-engine fallback (they require remote mode).
+// ---------------------------------------------------------------------------
+
+export interface EvaluateParams {
+  subject: string;
+  action: string;
+  resource: string;
+  org_id: string;
+  context?: Record<string, unknown>;
+}
+
+export interface EvaluateResponse {
+  decision: string;
+  permit_token?: string;
+  evaluation_id?: string;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+export async function evaluateAction(params: EvaluateParams): Promise<EvaluateResponse> {
+  const body: Record<string, unknown> = {
+    subject: params.subject,
+    action: params.action,
+    resource: params.resource,
+    org_id: params.org_id,
+  };
+  if (params.context !== undefined) body.context = params.context;
+  return post<EvaluateResponse>("/v1/evaluate", body);
+}
+
+export interface ListPoliciesParams {
+  org_id: string;
+  status?: string;
+}
+
+export async function listPolicies(params: ListPoliciesParams): Promise<unknown> {
+  return get("/v1/policies", {
+    org_id: params.org_id,
+    status: params.status,
+  });
+}
+
+export interface GetPolicyParams {
+  policy_id: string;
+  org_id: string;
+}
+
+export async function getPolicy(params: GetPolicyParams): Promise<unknown> {
+  return get(`/v1/policies/${encodeURIComponent(params.policy_id)}`, {
+    org_id: params.org_id,
+  });
+}
+
+export interface ListAuditEventsParams {
+  org_id: string;
+  evaluation_id?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export async function listAuditEvents(params: ListAuditEventsParams): Promise<unknown> {
+  return get("/v1/audit/events", {
+    org_id: params.org_id,
+    evaluation_id: params.evaluation_id,
+    from: params.from,
+    to: params.to,
+    limit: params.limit !== undefined ? String(params.limit) : undefined,
+  });
 }
