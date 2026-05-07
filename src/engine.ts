@@ -130,44 +130,52 @@ interface RawEvaluate {
   decision: string;
   permit_token?: string;
   reason?: string;
-  audit_id?: string;
+  request_id?: string;
+  denial?: { reason?: string; code?: string };
   conditions?: string[];
   hold_id?: string;
 }
 
 async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
+  const context: Record<string, unknown> = { environment: ctx.environment };
+  if (ctx.approvals !== undefined) context.approvals = ctx.approvals;
+  if (ctx.change_window !== undefined) context.change_window = ctx.change_window;
+
   const body: Record<string, unknown> = {
     action_type: ctx.action_type,
     actor_id: ctx.actor_id,
-    environment: ctx.environment,
+    context,
   };
-  if (ctx.approvals !== undefined) body.approvals = ctx.approvals;
-  if (ctx.change_window !== undefined) body.change_window = ctx.change_window;
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
+
+  // Normalise request_id → audit_id (canonical API contract uses request_id).
+  const audit_id = data.request_id;
 
   if (data.decision === "allow") {
     if (!data.permit_token) throw new Error("Remote allowed the action but returned no permit_token");
     const out: Decision = { decision: "allow", permit_token: data.permit_token };
-    if (data.audit_id) out.audit_id = data.audit_id;
+    if (audit_id) out.audit_id = audit_id;
     if (data.conditions?.length) out.conditions = data.conditions;
     return out;
   }
 
   if (data.decision === "hold" || data.decision === "escalate") {
+    const reason = data.denial?.reason ?? data.reason ?? "Held for human review";
     return {
       decision: "hold",
-      reason: data.reason ?? "Held for human review",
+      reason,
       ...(data.hold_id && { hold_id: data.hold_id }),
-      ...(data.audit_id && { audit_id: data.audit_id }),
+      ...(audit_id && { audit_id }),
     };
   }
 
   // Anything else (including "deny" or an unknown decision) is fail-closed.
+  const reason = data.denial?.reason ?? data.reason ?? `Denied (decision=${data.decision})`;
   return {
     decision: "deny",
-    reason: data.reason ?? `Denied (decision=${data.decision})`,
-    ...(data.audit_id && { audit_id: data.audit_id }),
+    reason,
+    ...(audit_id && { audit_id }),
   };
 }
 
@@ -192,7 +200,23 @@ async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyRe
 
   // Map the canonical "allow"|"deny" outcome to the internal VerifyResult
   // outcome vocabulary used across both local and remote paths.
-  const outcome: VerifyResult["outcome"] = data.outcome === "allow" ? "verified" : "invalid";
+  // verify_error_code refines the deny outcome: PERMIT_EXPIRED → "expired",
+  // RATE_LIMITED → "error", everything else → "invalid".
+  let outcome: VerifyResult["outcome"];
+  if (data.outcome === "allow") {
+    outcome = "verified";
+  } else {
+    switch (data.verify_error_code) {
+      case "PERMIT_EXPIRED":
+        outcome = "expired";
+        break;
+      case "RATE_LIMITED":
+        outcome = "error";
+        break;
+      default:
+        outcome = "invalid";
+    }
+  }
 
   return {
     outcome,
