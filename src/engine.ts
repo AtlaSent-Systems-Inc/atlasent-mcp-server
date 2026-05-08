@@ -390,3 +390,195 @@ export async function listPermits(params: ListPermitsParams): Promise<unknown> {
     cursor: params.cursor,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Permit issuance + v1 verification
+// ---------------------------------------------------------------------------
+
+export interface IssuePermitParams {
+  subject: string;
+  action: string;
+  resource: string;
+  org_id: string;
+  ttl_seconds?: number;
+  context?: Record<string, unknown>;
+}
+
+export async function issuePermit(params: IssuePermitParams): Promise<unknown> {
+  const body: Record<string, unknown> = {
+    subject: params.subject,
+    action: params.action,
+    resource: params.resource,
+    org_id: params.org_id,
+  };
+  if (params.ttl_seconds !== undefined) body.ttl_seconds = params.ttl_seconds;
+  if (params.context !== undefined) body.context = params.context;
+  return post("/v1/permits/issue", body);
+}
+
+export interface VerifyPermitV1Params {
+  permit_token: string;
+  org_id: string;
+  action?: string;
+  resource?: string;
+}
+
+export async function verifyPermitV1(params: VerifyPermitV1Params): Promise<unknown> {
+  const body: Record<string, unknown> = {
+    permit_token: params.permit_token,
+    org_id: params.org_id,
+  };
+  if (params.action !== undefined) body.action = params.action;
+  if (params.resource !== undefined) body.resource = params.resource;
+  return post("/v1/permits/verify", body);
+}
+
+// ---------------------------------------------------------------------------
+// Approval requests
+// ---------------------------------------------------------------------------
+
+export interface CreateApprovalRequestParams {
+  subject: string;
+  action: string;
+  resource: string;
+  org_id: string;
+  justification?: string;
+  context?: Record<string, unknown>;
+}
+
+export async function createApprovalRequest(
+  params: CreateApprovalRequestParams,
+): Promise<unknown> {
+  const body: Record<string, unknown> = {
+    subject: params.subject,
+    action: params.action,
+    resource: params.resource,
+    org_id: params.org_id,
+  };
+  if (params.justification !== undefined) body.justification = params.justification;
+  if (params.context !== undefined) body.context = params.context;
+  return post("/v1/approval-requests", body);
+}
+
+export interface ResolveApprovalRequestParams {
+  approval_request_id: string;
+  org_id: string;
+  resolution: "approve" | "deny";
+  resolver_id: string;
+  comment?: string;
+}
+
+export async function resolveApprovalRequest(
+  params: ResolveApprovalRequestParams,
+): Promise<unknown> {
+  const body: Record<string, unknown> = {
+    org_id: params.org_id,
+    resolution: params.resolution,
+    resolver_id: params.resolver_id,
+  };
+  if (params.comment !== undefined) body.comment = params.comment;
+  return post(
+    `/v1/approval-requests/${encodeURIComponent(params.approval_request_id)}/resolve`,
+    body,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Policy deletion
+// ---------------------------------------------------------------------------
+
+export interface DeletePolicyParams {
+  policy_id: string;
+  org_id: string;
+}
+
+async function del<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
+  let url = `${baseUrl()}${path}`;
+  if (params) {
+    const qs = Object.entries(params)
+      .filter(([, v]) => v !== undefined && v !== "")
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v as string)}`)
+      .join("&");
+    if (qs) url += `?${qs}`;
+  }
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: buildHeaders(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    handleHttpError(res.status, text);
+  }
+  // DELETE responses may have no body (204 No Content) or a JSON body
+  const text = await res.text().catch(() => "");
+  if (!text) return {} as T;
+  return JSON.parse(text) as T;
+}
+
+export async function deletePolicy(params: DeletePolicyParams): Promise<unknown> {
+  return del(`/v1/policies/${encodeURIComponent(params.policy_id)}`, {
+    org_id: params.org_id,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Execution evaluation recording
+// ---------------------------------------------------------------------------
+
+export interface RecordExecutionEvaluationParams {
+  evaluation_id: string;
+  org_id: string;
+  outcome: "success" | "failure" | "skipped";
+  executed_at?: string;
+  details?: Record<string, unknown>;
+}
+
+export async function recordExecutionEvaluation(
+  params: RecordExecutionEvaluationParams,
+): Promise<unknown> {
+  const body: Record<string, unknown> = {
+    org_id: params.org_id,
+    outcome: params.outcome,
+  };
+  if (params.executed_at !== undefined) body.executed_at = params.executed_at;
+  if (params.details !== undefined) body.details = params.details;
+  return post(
+    `/v1/evaluations/${encodeURIComponent(params.evaluation_id)}/execution`,
+    body,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Webhooks
+// ---------------------------------------------------------------------------
+
+export interface CreateWebhookParams {
+  org_id: string;
+  url: string;
+  events: string[];
+  description?: string;
+  secret?: string;
+}
+
+export async function createWebhook(params: CreateWebhookParams): Promise<unknown> {
+  const body: Record<string, unknown> = {
+    org_id: params.org_id,
+    url: params.url,
+    events: params.events,
+  };
+  if (params.description !== undefined) body.description = params.description;
+  if (params.secret !== undefined) body.secret = params.secret;
+  return post("/v1/webhooks", body);
+}
+
+export interface DeleteWebhookParams {
+  webhook_id: string;
+  org_id: string;
+}
+
+export async function deleteWebhook(params: DeleteWebhookParams): Promise<unknown> {
+  return del(`/v1/webhooks/${encodeURIComponent(params.webhook_id)}`, {
+    org_id: params.org_id,
+  });
+}

@@ -77,19 +77,27 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("tools/list", () => {
-  it("exposes evaluate, verify_permit, and deploy_service", async () => {
+  it("exposes evaluate, verify_permit, deploy_service, and all write tools", async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
+      "atlasent_create_approval_request",
       "atlasent_create_policy",
+      "atlasent_create_webhook",
+      "atlasent_delete_policy",
+      "atlasent_delete_webhook",
       "atlasent_evaluate",
       "atlasent_get_policy",
       "atlasent_list_audit_events",
       "atlasent_list_permits",
       "atlasent_list_policies",
+      "atlasent_permit",
+      "atlasent_record_execution_evaluation",
+      "atlasent_resolve_approval_request",
       "atlasent_revoke_permit",
       "atlasent_update_policy",
+      "atlasent_verify_permit",
       "deploy_service",
       "evaluate",
       "verify_permit",
@@ -778,5 +786,460 @@ describe("atlasent_list_permits", () => {
     });
     assert.equal(result.isError, true);
     assert.match(String(parseResult(result).error), /Rate limited/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_permit — issue a permit token
+// ---------------------------------------------------------------------------
+
+describe("atlasent_permit", () => {
+  it("happy path: returns permit object from API", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      permit_token: "pt_issued_abc",
+      expires_at: "2026-01-01T01:00:00Z",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_permit",
+      arguments: {
+        subject: "user:alice",
+        action: "deploy:production",
+        resource: "env:prod",
+        org_id: "org_abc",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.permit_token, "pt_issued_abc");
+    assert.equal(result.isError, undefined);
+  });
+
+  it("error path: 401 surfaces as isError", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_permit",
+      arguments: {
+        subject: "user:alice",
+        action: "deploy:production",
+        resource: "env:prod",
+        org_id: "org_abc",
+      },
+    });
+    const data = parseResult(result);
+    assert.ok(data.error, "should have error field");
+    assert.equal(result.isError, true);
+  });
+
+  it("input validation: missing required subject field", async () => {
+    forceRemoteMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_permit",
+      arguments: {
+        action: "deploy:production",
+        resource: "env:prod",
+        org_id: "org_abc",
+      },
+    });
+    assert.equal(result.isError, true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    assert.match(text, /subject/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_verify_permit (v1)
+// ---------------------------------------------------------------------------
+
+describe("atlasent_verify_permit (v1)", () => {
+  it("happy path: returns valid verification from API", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ valid: true, outcome: "allow" });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_verify_permit",
+      arguments: {
+        permit_token: "pt_abc123",
+        org_id: "org_abc",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.valid, true);
+    assert.equal(result.isError, undefined);
+  });
+
+  it("error path: 401 surfaces as isError", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_verify_permit",
+      arguments: {
+        permit_token: "pt_abc123",
+        org_id: "org_abc",
+      },
+    });
+    const data = parseResult(result);
+    assert.ok(data.error, "should have error field");
+    assert.equal(result.isError, true);
+  });
+
+  it("input validation: missing permit_token", async () => {
+    forceRemoteMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_verify_permit",
+      arguments: { org_id: "org_abc" },
+    });
+    assert.equal(result.isError, true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    assert.match(text, /permit_token/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_create_approval_request
+// ---------------------------------------------------------------------------
+
+describe("atlasent_create_approval_request", () => {
+  it("happy path: returns approval_request_id", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      approval_request_id: "apr_xyz",
+      status: "pending",
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_create_approval_request",
+      arguments: {
+        subject: "user:alice",
+        action: "delete:production-db",
+        resource: "db:prod-postgres",
+        org_id: "org_abc",
+        justification: "Need to clean up old records",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.approval_request_id, "apr_xyz");
+    assert.equal(result.isError, undefined);
+  });
+
+  it("error path: 401 surfaces as isError", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_create_approval_request",
+      arguments: {
+        subject: "user:alice",
+        action: "delete:production-db",
+        resource: "db:prod-postgres",
+        org_id: "org_abc",
+      },
+    });
+    const data = parseResult(result);
+    assert.ok(data.error, "should have error field");
+    assert.equal(result.isError, true);
+  });
+
+  it("input validation: missing resource", async () => {
+    forceRemoteMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_create_approval_request",
+      arguments: {
+        subject: "user:alice",
+        action: "delete:production-db",
+        org_id: "org_abc",
+      },
+    });
+    assert.equal(result.isError, true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    assert.match(text, /resource/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_resolve_approval_request
+// ---------------------------------------------------------------------------
+
+describe("atlasent_resolve_approval_request", () => {
+  it("happy path: approve returns resolved status", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      approval_request_id: "apr_xyz",
+      status: "approved",
+      resolver_id: "user:bob",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_resolve_approval_request",
+      arguments: {
+        approval_request_id: "apr_xyz",
+        org_id: "org_abc",
+        resolution: "approve",
+        resolver_id: "user:bob",
+        comment: "LGTM",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.status, "approved");
+    assert.equal(result.isError, undefined);
+  });
+
+  it("error path: 401 surfaces as isError", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_resolve_approval_request",
+      arguments: {
+        approval_request_id: "apr_xyz",
+        org_id: "org_abc",
+        resolution: "deny",
+        resolver_id: "user:bob",
+      },
+    });
+    const data = parseResult(result);
+    assert.ok(data.error, "should have error field");
+    assert.equal(result.isError, true);
+  });
+
+  it("input validation: invalid resolution value", async () => {
+    forceRemoteMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_resolve_approval_request",
+      arguments: {
+        approval_request_id: "apr_xyz",
+        org_id: "org_abc",
+        resolution: "maybe",
+        resolver_id: "user:bob",
+      },
+    });
+    assert.equal(result.isError, true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    assert.match(text, /resolution/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_delete_policy
+// ---------------------------------------------------------------------------
+
+describe("atlasent_delete_policy", () => {
+  it("happy path: returns empty body on successful delete", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({});
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_delete_policy",
+      arguments: {
+        policy_id: "pol_abc",
+        org_id: "org_abc",
+      },
+    });
+    assert.equal(result.isError, undefined);
+  });
+
+  it("error path: 401 surfaces as isError", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_delete_policy",
+      arguments: {
+        policy_id: "pol_abc",
+        org_id: "org_abc",
+      },
+    });
+    const data = parseResult(result);
+    assert.ok(data.error, "should have error field");
+    assert.equal(result.isError, true);
+  });
+
+  it("input validation: missing org_id", async () => {
+    forceRemoteMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_delete_policy",
+      arguments: { policy_id: "pol_abc" },
+    });
+    assert.equal(result.isError, true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    assert.match(text, /org_id/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_record_execution_evaluation
+// ---------------------------------------------------------------------------
+
+describe("atlasent_record_execution_evaluation", () => {
+  it("happy path: returns recorded evaluation", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      execution_id: "exec_abc",
+      outcome: "success",
+      recorded_at: "2026-01-01T00:00:00Z",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_record_execution_evaluation",
+      arguments: {
+        evaluation_id: "eval_abc",
+        org_id: "org_abc",
+        outcome: "success",
+        executed_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.outcome, "success");
+    assert.equal(result.isError, undefined);
+  });
+
+  it("error path: 401 surfaces as isError", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_record_execution_evaluation",
+      arguments: {
+        evaluation_id: "eval_abc",
+        org_id: "org_abc",
+        outcome: "failure",
+      },
+    });
+    const data = parseResult(result);
+    assert.ok(data.error, "should have error field");
+    assert.equal(result.isError, true);
+  });
+
+  it("input validation: invalid outcome value", async () => {
+    forceRemoteMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_record_execution_evaluation",
+      arguments: {
+        evaluation_id: "eval_abc",
+        org_id: "org_abc",
+        outcome: "partial",
+      },
+    });
+    assert.equal(result.isError, true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    assert.match(text, /outcome/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_create_webhook
+// ---------------------------------------------------------------------------
+
+describe("atlasent_create_webhook", () => {
+  it("happy path: returns webhook_id", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      webhook_id: "wh_abc123",
+      url: "https://example.com/hooks/atlasent",
+      events: ["evaluation.deny"],
+      secret: "whsec_xxxxx",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_create_webhook",
+      arguments: {
+        org_id: "org_abc",
+        url: "https://example.com/hooks/atlasent",
+        events: ["evaluation.deny", "approval.requested"],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.webhook_id, "wh_abc123");
+    assert.equal(result.isError, undefined);
+  });
+
+  it("error path: 401 surfaces as isError", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_create_webhook",
+      arguments: {
+        org_id: "org_abc",
+        url: "https://example.com/hooks/atlasent",
+        events: ["evaluation.deny"],
+      },
+    });
+    const data = parseResult(result);
+    assert.ok(data.error, "should have error field");
+    assert.equal(result.isError, true);
+  });
+
+  it("input validation: missing events array", async () => {
+    forceRemoteMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_create_webhook",
+      arguments: {
+        org_id: "org_abc",
+        url: "https://example.com/hooks/atlasent",
+      },
+    });
+    assert.equal(result.isError, true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    assert.match(text, /events/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_delete_webhook
+// ---------------------------------------------------------------------------
+
+describe("atlasent_delete_webhook", () => {
+  it("happy path: returns empty body on successful delete", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({});
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_delete_webhook",
+      arguments: {
+        webhook_id: "wh_abc123",
+        org_id: "org_abc",
+      },
+    });
+    assert.equal(result.isError, undefined);
+  });
+
+  it("error path: 401 surfaces as isError", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_delete_webhook",
+      arguments: {
+        webhook_id: "wh_abc123",
+        org_id: "org_abc",
+      },
+    });
+    const data = parseResult(result);
+    assert.ok(data.error, "should have error field");
+    assert.equal(result.isError, true);
+  });
+
+  it("input validation: missing webhook_id", async () => {
+    forceRemoteMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_delete_webhook",
+      arguments: { org_id: "org_abc" },
+    });
+    assert.equal(result.isError, true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    assert.match(text, /webhook_id/i);
   });
 });
