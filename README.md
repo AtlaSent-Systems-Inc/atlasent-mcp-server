@@ -109,6 +109,116 @@ Output: array of audit event objects
 }
 ```
 
+### `atlasent_create_policy` — create an authorization policy
+
+Define a new authorization rule. New policies are created in `draft` state (no enforcement) and must be promoted to `shadow` or `enforce` to take effect.
+
+```
+Input:  { org_id, policy_id, title, policy_type, rules, description?, status?, ... }
+Output: { policy_id, title, status, ... }
+```
+
+### `atlasent_update_policy` — update an existing policy
+
+Partial-update (PATCH) a policy's rules, metadata, or lifecycle status (e.g. promote `draft` → `enforce`).
+
+```
+Input:  { policy_id, org_id, title?, rules?, status?, ... }
+Output: { policy_id, status, ... }
+```
+
+### `atlasent_delete_policy` — permanently delete a policy
+
+Irreversibly remove a policy. Prefer setting `status: "archived"` via `atlasent_update_policy` when you only want to disable enforcement.
+
+```
+Input:  { policy_id, org_id }
+Output: {} (empty on success)
+```
+
+### `atlasent_list_permits` — list issued permits
+
+Paginated list of permits for an organization, with optional filters by status, actor, action type, and time range.
+
+```
+Input:  { org_id, status?, actor_id?, action_type?, from?, to?, limit?, cursor? }
+Output: { permits: [...], next_cursor? }
+```
+
+### `atlasent_revoke_permit` — revoke an issued permit
+
+Immediately invalidate a permit so subsequent verify calls fail with `permit_revoked`. Idempotent.
+
+```
+Input:  { permit_id, org_id, reason? }
+Output: { revoked, permit_id, ... }
+```
+
+### `atlasent_permit` — issue a permit token out-of-band
+
+Mint a time-limited permit for a subject/action/resource outside of the standard evaluate flow — for example when a human pre-approves access.
+
+```
+Input:  { subject, action, resource, org_id, ttl_seconds?, context? }
+Output: { permit_token, expires_at?, ... }
+```
+
+### `atlasent_verify_permit` — verify a permit token (v1 REST)
+
+Verify a permit token is currently valid for a given subject/action/resource. Use after completing an authorized action to close the audit loop.
+
+```
+Input:  { permit_token, org_id, action?, resource? }
+Output: { valid, outcome, reason? }
+```
+
+### `atlasent_create_approval_request` — request human approval
+
+Submit an action for human sign-off. Call when `atlasent_evaluate` returns `hold` or when the agent knows approval is required. Do not proceed until resolved.
+
+```
+Input:  { subject, action, resource, org_id, justification?, context? }
+Output: { approval_request_id, status, created_at, ... }
+```
+
+### `atlasent_resolve_approval_request` — approve or deny a request
+
+Approve or deny a pending approval request on behalf of a human reviewer.
+
+```
+Input:  { approval_request_id, org_id, resolution, resolver_id, comment? }
+        (resolution: "approve" | "deny")
+Output: { approval_request_id, status, resolver_id, ... }
+```
+
+### `atlasent_record_execution_evaluation` — record execution outcome
+
+Record the outcome of an authorized action to complete the full audit loop: evaluate → execute → record.
+
+```
+Input:  { evaluation_id, org_id, outcome, executed_at?, details? }
+        (outcome: "success" | "failure" | "skipped")
+Output: { execution_id, outcome, recorded_at, ... }
+```
+
+### `atlasent_create_webhook` — register a webhook
+
+Subscribe an external HTTPS endpoint to real-time AtlaSent events (e.g. `evaluation.deny`, `approval.requested`, `permit.revoked`).
+
+```
+Input:  { org_id, url, events, description?, secret? }
+Output: { webhook_id, url, events, secret?, ... }
+```
+
+### `atlasent_delete_webhook` — remove a webhook
+
+Permanently deregister a webhook. AtlaSent stops sending events to that URL immediately.
+
+```
+Input:  { webhook_id, org_id }
+Output: {} (empty on success)
+```
+
 ### `evaluate` — for agents that gate themselves (local/remote mode)
 
 The agent calls `evaluate` before any sensitive action and respects the decision.
