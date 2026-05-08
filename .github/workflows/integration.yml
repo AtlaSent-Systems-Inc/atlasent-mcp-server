@@ -20,3 +20,7 @@ jobs:
           ATLASENT_API_KEY: ${{ secrets.ATLASENT_API_KEY }}
           ATLASENT_ANON_KEY: ${{ secrets.ATLASENT_ANON_KEY }}
           ATLASENT_BASE_URL: ${{ secrets.ATLASENT_BASE_URL }}
+          # Sandbox-only opt-in for the policy + permit write-tool tests.
+          # Without this secret, src/integration.write.test.ts skips and
+          # no write operations run against the live API.
+          ATLASENT_SANDBOX_ORG_ID: ${{ secrets.ATLASENT_SANDBOX_ORG_ID }}

@@ -82,10 +82,14 @@ describe("tools/list", () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
+      "atlasent_create_policy",
       "atlasent_evaluate",
       "atlasent_get_policy",
       "atlasent_list_audit_events",
+      "atlasent_list_permits",
       "atlasent_list_policies",
+      "atlasent_revoke_permit",
+      "atlasent_update_policy",
       "deploy_service",
       "evaluate",
       "verify_permit",
@@ -571,5 +575,208 @@ describe("rate limiting (per-tool token bucket)", () => {
     // Third call (within the same minute) trips the limiter.
     assert.equal(r3.decision, "deny");
     assert.match(String(r3.reason ?? ""), /rate limit/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Policy + permit write tools (remote-only)
+// ---------------------------------------------------------------------------
+
+interface CapturedRequest {
+  url: string;
+  method: string;
+  body: unknown;
+}
+
+function captureFetch(response: object, status = 200) {
+  const captured: CapturedRequest[] = [];
+  const fn = async (url: string | URL | Request, init?: RequestInit) => {
+    let parsedBody: unknown = undefined;
+    if (typeof init?.body === "string" && init.body.length > 0) {
+      try {
+        parsedBody = JSON.parse(init.body);
+      } catch {
+        parsedBody = init.body;
+      }
+    }
+    captured.push({
+      url: String(url),
+      method: init?.method ?? "GET",
+      body: parsedBody,
+    });
+    return new Response(JSON.stringify(response), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  return { fn: mock.fn(fn), captured };
+}
+
+describe("atlasent_create_policy", () => {
+  it("POSTs the policy body to /v1/policies and returns the row", async () => {
+    forceRemoteMode();
+    const created = { id: "pol_123", policy_id: "deploy-gate", status: "draft" };
+    const { fn, captured } = captureFetch(created);
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_create_policy",
+      arguments: {
+        org_id: "org_1",
+        policy_id: "deploy-gate",
+        title: "Production deploy gate",
+        policy_type: "access_control",
+        rules: [{ when: "env=production", require: "approvals>=2" }],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.id, "pol_123");
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].method, "POST");
+    assert.match(captured[0].url, /\/v1\/policies$/);
+    const body = captured[0].body as Record<string, unknown>;
+    assert.equal(body.org_id, "org_1");
+    assert.equal(body.policy_id, "deploy-gate");
+    assert.equal(body.policy_type, "access_control");
+    assert.deepEqual(body.rules, [{ when: "env=production", require: "approvals>=2" }]);
+  });
+
+  it("surfaces 401 as an isError result", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_create_policy",
+      arguments: {
+        org_id: "org_1",
+        policy_id: "x",
+        title: "x",
+        policy_type: "x",
+        rules: [{ a: 1 }],
+      },
+    });
+    assert.equal(result.isError, true);
+    assert.match(String(parseResult(result).error), /Authentication failed/i);
+  });
+});
+
+describe("atlasent_update_policy", () => {
+  it("PATCHes /v1/policies/:id with only the supplied fields", async () => {
+    forceRemoteMode();
+    const updated = { id: "pol_123", policy_id: "deploy-gate", status: "enforce" };
+    const { fn, captured } = captureFetch(updated);
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_update_policy",
+      arguments: {
+        policy_id: "deploy-gate",
+        org_id: "org_1",
+        status: "enforce",
+        priority: 50,
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.status, "enforce");
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].method, "PATCH");
+    assert.match(captured[0].url, /\/v1\/policies\/deploy-gate$/);
+    const body = captured[0].body as Record<string, unknown>;
+    assert.equal(body.org_id, "org_1");
+    assert.equal(body.status, "enforce");
+    assert.equal(body.priority, 50);
+    // Fields the caller did not supply must not appear in the PATCH body.
+    assert.equal(body.title, undefined);
+    assert.equal(body.rules, undefined);
+    assert.equal(body.policy_id, undefined);
+  });
+});
+
+describe("atlasent_revoke_permit", () => {
+  it("POSTs to /v1/permits/:id/revoke with org and reason", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch({
+      id: "permit_42",
+      status: "revoked",
+      revoked_at: "2026-05-08T00:00:00Z",
+    });
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_revoke_permit",
+      arguments: {
+        permit_id: "permit_42",
+        org_id: "org_1",
+        reason: "compromised actor",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.status, "revoked");
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].method, "POST");
+    assert.match(captured[0].url, /\/v1\/permits\/permit_42\/revoke$/);
+    const body = captured[0].body as Record<string, unknown>;
+    assert.equal(body.org_id, "org_1");
+    assert.equal(body.reason, "compromised actor");
+  });
+
+  it("omits reason from the body when not supplied", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch({ id: "permit_42", status: "revoked" });
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_revoke_permit",
+      arguments: { permit_id: "permit_42", org_id: "org_1" },
+    });
+    const body = captured[0].body as Record<string, unknown>;
+    assert.equal("reason" in body, false);
+  });
+});
+
+describe("atlasent_list_permits", () => {
+  it("GETs /v1/permits with the supplied filters in the query string", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch({
+      permits: [{ id: "permit_1", status: "issued" }],
+      total: 1,
+      next_cursor: null,
+    });
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_list_permits",
+      arguments: {
+        org_id: "org_1",
+        status: "issued",
+        actor_id: "agent-7",
+        limit: 25,
+      },
+    });
+    const data = parseResult(result);
+    assert.equal((data.permits as unknown[]).length, 1);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].method, "GET");
+    const u = new URL(captured[0].url);
+    assert.equal(u.pathname, "/v1/permits");
+    assert.equal(u.searchParams.get("org_id"), "org_1");
+    assert.equal(u.searchParams.get("status"), "issued");
+    assert.equal(u.searchParams.get("actor_id"), "agent-7");
+    assert.equal(u.searchParams.get("limit"), "25");
+    // Unsupplied filters must not leak into the query string.
+    assert.equal(u.searchParams.has("action_type"), false);
+    assert.equal(u.searchParams.has("cursor"), false);
+  });
+
+  it("surfaces 429 as an isError rate-limited result", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "rate limited" }, 429);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_list_permits",
+      arguments: { org_id: "org_1" },
+    });
+    assert.equal(result.isError, true);
+    assert.match(String(parseResult(result).error), /Rate limited/i);
   });
 });

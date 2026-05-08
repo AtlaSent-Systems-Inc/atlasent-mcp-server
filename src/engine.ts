@@ -101,6 +101,20 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${baseUrl()}${path}`, {
+    method: "PATCH",
+    headers: buildHeaders(),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    handleHttpError(res.status, text);
+  }
+  return (await res.json()) as T;
+}
+
 async function get<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
   let url = `${baseUrl()}${path}`;
   if (params) {
@@ -297,5 +311,82 @@ export async function listAuditEvents(params: ListAuditEventsParams): Promise<un
     from: params.from,
     to: params.to,
     limit: params.limit !== undefined ? String(params.limit) : undefined,
+  });
+}
+
+export interface CreatePolicyParams {
+  org_id: string;
+  policy_id: string;
+  title: string;
+  policy_type: string;
+  rules: unknown[];
+  description?: string;
+  version?: string;
+  priority?: number;
+  applies_to?: Record<string, unknown>;
+  actions?: Record<string, unknown>;
+  effective_at?: string;
+  expires_at?: string;
+}
+
+export async function createPolicy(params: CreatePolicyParams): Promise<unknown> {
+  return post("/v1/policies", params);
+}
+
+export interface UpdatePolicyParams {
+  policy_id: string;
+  org_id: string;
+  title?: string;
+  description?: string;
+  policy_type?: string;
+  rules?: unknown[];
+  version?: string;
+  priority?: number;
+  applies_to?: Record<string, unknown>;
+  actions?: Record<string, unknown>;
+  status?: string;
+  effective_at?: string;
+  expires_at?: string;
+}
+
+export async function updatePolicy(params: UpdatePolicyParams): Promise<unknown> {
+  const { policy_id, ...patchBody } = params;
+  return patch(`/v1/policies/${encodeURIComponent(policy_id)}`, patchBody);
+}
+
+export interface RevokePermitParams {
+  permit_id: string;
+  org_id: string;
+  reason?: string;
+}
+
+export async function revokePermit(params: RevokePermitParams): Promise<unknown> {
+  return post(`/v1/permits/${encodeURIComponent(params.permit_id)}/revoke`, {
+    org_id: params.org_id,
+    ...(params.reason !== undefined ? { reason: params.reason } : {}),
+  });
+}
+
+export interface ListPermitsParams {
+  org_id: string;
+  status?: string;
+  actor_id?: string;
+  action_type?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export async function listPermits(params: ListPermitsParams): Promise<unknown> {
+  return get("/v1/permits", {
+    org_id: params.org_id,
+    status: params.status,
+    actor_id: params.actor_id,
+    action_type: params.action_type,
+    from: params.from,
+    to: params.to,
+    limit: params.limit !== undefined ? String(params.limit) : undefined,
+    cursor: params.cursor,
   });
 }
