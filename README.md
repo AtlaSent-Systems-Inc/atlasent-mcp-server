@@ -47,177 +47,19 @@ ATLASENT_MODE=remote \
 
 ## Tools
 
-### `atlasent_evaluate` — evaluate an action against AtlaSent policies
+See the full tool reference in this repository's `src/server.ts`. Highlights:
 
-Evaluate whether a subject is permitted to perform an action on a resource. Returns a `decision` (`allow`/`deny`/`hold`/`escalate`), a `permit_token` if allowed, an `evaluation_id`, and an optional `reason`.
-
-```
-Input:  { subject, action, resource, org_id, context? }
-Output: { decision, permit_token?, evaluation_id?, reason?, ... }
-```
-
-**Example:**
-```json
-{
-  "subject": "user:alice",
-  "action": "deploy:production",
-  "resource": "env:prod",
-  "org_id": "org_abc123",
-  "context": { "ip": "10.0.0.1" }
-}
-```
-
-### `atlasent_list_policies` — list all policies for an organization
-
-Returns all policies for the given org, optionally filtered by status.
-
-```
-Input:  { org_id, status? }   (status: "draft" | "shadow" | "enforce")
-Output: array of policy objects
-```
-
-**Example:** `{ "org_id": "org_abc123", "status": "enforce" }`
-
-### `atlasent_get_policy` — get a single policy by ID
-
-Fetches the full policy definition for a given `policy_id`.
-
-```
-Input:  { policy_id, org_id }
-Output: policy object
-```
-
-**Example:** `{ "policy_id": "pol_xyz789", "org_id": "org_abc123" }`
-
-### `atlasent_list_audit_events` — query the audit event log
-
-Query recent evaluation decisions. Use to verify that an evaluation was recorded or to investigate a sequence of decisions.
-
-```
-Input:  { org_id, evaluation_id?, from?, to?, limit? }
-        (from/to: ISO 8601; limit: 1–100, default 20)
-Output: array of audit event objects
-```
-
-**Example:**
-```json
-{
-  "org_id": "org_abc123",
-  "from": "2025-01-01T00:00:00Z",
-  "to": "2025-01-02T00:00:00Z",
-  "limit": 50
-}
-```
-
-### `atlasent_create_policy` — create an authorization policy
-
-Define a new authorization rule. New policies are created in `draft` state (no enforcement) and must be promoted to `shadow` or `enforce` to take effect.
-
-```
-Input:  { org_id, policy_id, title, policy_type, rules, description?, status?, ... }
-Output: { policy_id, title, status, ... }
-```
-
-### `atlasent_update_policy` — update an existing policy
-
-Partial-update (PATCH) a policy's rules, metadata, or lifecycle status (e.g. promote `draft` → `enforce`).
-
-```
-Input:  { policy_id, org_id, title?, rules?, status?, ... }
-Output: { policy_id, status, ... }
-```
-
-### `atlasent_delete_policy` — permanently delete a policy
-
-Irreversibly remove a policy. Prefer setting `status: "archived"` via `atlasent_update_policy` when you only want to disable enforcement.
-
-```
-Input:  { policy_id, org_id }
-Output: {} (empty on success)
-```
-
-### `atlasent_list_permits` — list issued permits
-
-Paginated list of permits for an organization, with optional filters by status, actor, action type, and time range.
-
-```
-Input:  { org_id, status?, actor_id?, action_type?, from?, to?, limit?, cursor? }
-Output: { permits: [...], next_cursor? }
-```
-
-### `atlasent_revoke_permit` — revoke an issued permit
-
-Immediately invalidate a permit so subsequent verify calls fail with `permit_revoked`. Idempotent.
-
-```
-Input:  { permit_id, org_id, reason? }
-Output: { revoked, permit_id, ... }
-```
-
-### `atlasent_permit` — issue a permit token out-of-band
-
-Mint a time-limited permit for a subject/action/resource outside of the standard evaluate flow — for example when a human pre-approves access.
-
-```
-Input:  { subject, action, resource, org_id, ttl_seconds?, context? }
-Output: { permit_token, expires_at?, ... }
-```
-
-### `atlasent_verify_permit` — verify a permit token (v1 REST)
-
-Verify a permit token is currently valid for a given subject/action/resource. Use after completing an authorized action to close the audit loop.
-
-```
-Input:  { permit_token, org_id, action?, resource? }
-Output: { valid, outcome, reason? }
-```
-
-### `atlasent_create_approval_request` — request human approval
-
-Submit an action for human sign-off. Call when `atlasent_evaluate` returns `hold` or when the agent knows approval is required. Do not proceed until resolved.
-
-```
-Input:  { subject, action, resource, org_id, justification?, context? }
-Output: { approval_request_id, status, created_at, ... }
-```
-
-### `atlasent_resolve_approval_request` — approve or deny a request
-
-Approve or deny a pending approval request on behalf of a human reviewer.
-
-```
-Input:  { approval_request_id, org_id, resolution, resolver_id, comment? }
-        (resolution: "approve" | "deny")
-Output: { approval_request_id, status, resolver_id, ... }
-```
-
-### `atlasent_record_execution_evaluation` — record execution outcome
-
-Record the outcome of an authorized action to complete the full audit loop: evaluate → execute → record.
-
-```
-Input:  { evaluation_id, org_id, outcome, executed_at?, details? }
-        (outcome: "success" | "failure" | "skipped")
-Output: { execution_id, outcome, recorded_at, ... }
-```
-
-### `atlasent_create_webhook` — register a webhook
-
-Subscribe an external HTTPS endpoint to real-time AtlaSent events (e.g. `evaluation.deny`, `approval.requested`, `permit.revoked`).
-
-```
-Input:  { org_id, url, events, description?, secret? }
-Output: { webhook_id, url, events, secret?, ... }
-```
-
-### `atlasent_delete_webhook` — remove a webhook
-
-Permanently deregister a webhook. AtlaSent stops sending events to that URL immediately.
-
-```
-Input:  { webhook_id, org_id }
-Output: {} (empty on success)
-```
+- `atlasent_evaluate` — evaluate an action against AtlaSent policies
+- `atlasent_list_policies` / `atlasent_get_policy` — read policy catalog
+- `atlasent_create_policy` / `atlasent_update_policy` / `atlasent_delete_policy` — manage policies
+- `atlasent_list_audit_events` — query the audit event log
+- `atlasent_list_permits` / `atlasent_revoke_permit` / `atlasent_permit` — permit lifecycle
+- `atlasent_verify_permit` — verify a permit token (v1 REST)
+- `atlasent_create_approval_request` / `atlasent_resolve_approval_request` — human approval flow
+- `atlasent_record_execution_evaluation` — record execution outcome
+- `atlasent_create_webhook` / `atlasent_delete_webhook` — webhook management
+- `evaluate` / `verify_permit` — lower-level primitives for agents that gate themselves
+- `deploy_service` — demo of the interception pattern
 
 ### `evaluate` — for agents that gate themselves (local/remote mode)
 
@@ -256,13 +98,13 @@ See `src/server.ts` (the `deploy_service` handler) for the exact 20-line pattern
   └─────┬───────┘
         │
         ▼
-  ┌─────────────────────────┐
+  ┌───────────────────────┐
   │    Protected tool       │
   │  (e.g. deploy_service)  │
   └─────┬───────────────────┘
         │ (1) build ActionContext
         ▼
-  ┌─────────────────┐       ┌──────────────────────────┐
+  ┌─────────────────┐       ┌────────────────────────┐
   │  authorize(ctx)  │──────▶│  engine (local | remote)  │
   └─────┬───────────┘       └────────┬─────────────────┘
         │ (2) Decision               │
@@ -408,4 +250,10 @@ npm run demo               # end-to-end authorization demo (local mode)
 
 ## License
 
-[MIT](LICENSE)
+Licensed under the [Apache License, Version 2.0](./LICENSE). See [NOTICE](./NOTICE) for attribution.
+
+Copyright (c) AtlaSent IP Holdings LLC
+
+Commercial licensing inquiries: [legal@atlasent.io](mailto:legal@atlasent.io)
+
+> Note: previously-published versions of `@atlasent/mcp-server` on npm declare `MIT` in their package metadata; that cannot be retroactively relicensed. Future versions will publish under Apache-2.0.
