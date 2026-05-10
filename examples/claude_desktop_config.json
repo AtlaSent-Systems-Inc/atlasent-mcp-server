@@ -9,7 +9,7 @@
       "args": ["-y", "@atlasent/mcp-server"],
       "env": {
         "ATLASENT_API_KEY": "<your-atlasent-api-key>",
-        "ATLASENT_BASE_URL": "https://api.atlasent.com",
+        "ATLASENT_BASE_URL": "https://api.atlasent.io",
         "ATLASENT_MODE": "remote"
       }
     },
@@ -32,7 +32,7 @@
         "ATLASENT_TRANSPORT": "http",
         "PORT": "3000",
         "ATLASENT_API_KEY": "<your-atlasent-api-key>",
-        "ATLASENT_BASE_URL": "https://api.atlasent.com",
+        "ATLASENT_BASE_URL": "https://api.atlasent.io",
         "ATLASENT_MODE": "remote"
       }
     }
