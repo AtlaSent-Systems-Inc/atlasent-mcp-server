@@ -187,11 +187,44 @@ function rateLimitOk(toolName: string): boolean {
   return true;
 }
 
+// Live-API demos (ATLASENT_MODE=remote with a real key) expose mutating
+// CRUD tools that call the hosted API directly — they do NOT pass
+// through authorize(). An adversarial prompt or a hallucinated
+// "clean up" step could destroy real policies, webhooks, or revoke
+// live permits. Setting ATLASENT_MCP_READONLY=1 skips registration of
+// the 7 mutating tools below. The demo flow (evaluate → deploy_service
+// → verify_permit), all list/get/audit-read tools, and the
+// approval-request workflow remain available.
+const READONLY_DISABLED_TOOLS = new Set([
+  "atlasent_create_policy",
+  "atlasent_update_policy",
+  "atlasent_delete_policy",
+  "atlasent_create_webhook",
+  "atlasent_delete_webhook",
+  "atlasent_revoke_permit",
+  "atlasent_permit",
+]);
+
+export function isToolDisabledByReadOnly(toolName: string): boolean {
+  const flag = process.env.ATLASENT_MCP_READONLY;
+  if (flag !== "1" && flag !== "true") return false;
+  return READONLY_DISABLED_TOOLS.has(toolName);
+}
+
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "@atlasent/mcp-server",
     version: VERSION,
   });
+
+  if (
+    process.env.ATLASENT_MCP_READONLY === "1" ||
+    process.env.ATLASENT_MCP_READONLY === "true"
+  ) {
+    log("server.readonly_mode", {
+      disabled_tools: [...READONLY_DISABLED_TOOLS].sort(),
+    });
+  }
 
   // -------------------------------------------------------------------------
   // evaluate — for agents that gate their own tool calls
@@ -681,6 +714,7 @@ export function createServer(): McpServer {
       .describe("ISO 8601 datetime when the policy expires."),
   };
 
+  if (!isToolDisabledByReadOnly("atlasent_create_policy"))
   server.registerTool(
     "atlasent_create_policy",
     {
@@ -749,6 +783,7 @@ export function createServer(): McpServer {
   // -------------------------------------------------------------------------
   // atlasent_update_policy — partial update of an existing policy
   // -------------------------------------------------------------------------
+  if (!isToolDisabledByReadOnly("atlasent_update_policy"))
   server.registerTool(
     "atlasent_update_policy",
     {
@@ -831,6 +866,7 @@ export function createServer(): McpServer {
   // -------------------------------------------------------------------------
   // atlasent_revoke_permit — revoke an issued permit
   // -------------------------------------------------------------------------
+  if (!isToolDisabledByReadOnly("atlasent_revoke_permit"))
   server.registerTool(
     "atlasent_revoke_permit",
     {
@@ -989,6 +1025,7 @@ export function createServer(): McpServer {
   // -------------------------------------------------------------------------
   // atlasent_permit — issue a permit token
   // -------------------------------------------------------------------------
+  if (!isToolDisabledByReadOnly("atlasent_permit"))
   server.registerTool(
     "atlasent_permit",
     {
@@ -1299,6 +1336,7 @@ export function createServer(): McpServer {
   // -------------------------------------------------------------------------
   // atlasent_delete_policy — permanently delete a policy
   // -------------------------------------------------------------------------
+  if (!isToolDisabledByReadOnly("atlasent_delete_policy"))
   server.registerTool(
     "atlasent_delete_policy",
     {
@@ -1429,6 +1467,7 @@ export function createServer(): McpServer {
   // -------------------------------------------------------------------------
   // atlasent_create_webhook — register a webhook for AtlaSent events
   // -------------------------------------------------------------------------
+  if (!isToolDisabledByReadOnly("atlasent_create_webhook"))
   server.registerTool(
     "atlasent_create_webhook",
     {
@@ -1505,6 +1544,7 @@ export function createServer(): McpServer {
   // -------------------------------------------------------------------------
   // atlasent_delete_webhook — remove a registered webhook
   // -------------------------------------------------------------------------
+  if (!isToolDisabledByReadOnly("atlasent_delete_webhook"))
   server.registerTool(
     "atlasent_delete_webhook",
     {

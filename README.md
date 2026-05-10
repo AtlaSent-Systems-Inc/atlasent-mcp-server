@@ -42,8 +42,11 @@ The demo uses `local` mode (no API key needed). To run the same demo against the
 ATLASENT_MODE=remote \
   ATLASENT_API_KEY=as_live_xxx \
   ATLASENT_BASE_URL=https://api.atlasent.com \
+  ATLASENT_MCP_READONLY=1 \
   npm run demo
 ```
+
+`ATLASENT_MCP_READONLY=1` is **recommended for any live-API demo** — see [Read-only mode](#read-only-mode-for-live-demos) below.
 
 ## Tools
 
@@ -111,6 +114,8 @@ Output: array of audit event objects
 
 ### `atlasent_create_policy` — create an authorization policy
 
+> **Mutating tool — gated off when `ATLASENT_MCP_READONLY=1`.**
+
 Define a new authorization rule. New policies are created in `draft` state (no enforcement) and must be promoted to `shadow` or `enforce` to take effect.
 
 ```
@@ -120,6 +125,8 @@ Output: { policy_id, title, status, ... }
 
 ### `atlasent_update_policy` — update an existing policy
 
+> **Mutating tool — gated off when `ATLASENT_MCP_READONLY=1`.**
+
 Partial-update (PATCH) a policy's rules, metadata, or lifecycle status (e.g. promote `draft` → `enforce`).
 
 ```
@@ -128,6 +135,8 @@ Output: { policy_id, status, ... }
 ```
 
 ### `atlasent_delete_policy` — permanently delete a policy
+
+> **Destructive tool — gated off when `ATLASENT_MCP_READONLY=1`.**
 
 Irreversibly remove a policy. Prefer setting `status: "archived"` via `atlasent_update_policy` when you only want to disable enforcement.
 
@@ -147,6 +156,8 @@ Output: { permits: [...], next_cursor? }
 
 ### `atlasent_revoke_permit` — revoke an issued permit
 
+> **Destructive tool — gated off when `ATLASENT_MCP_READONLY=1`.**
+
 Immediately invalidate a permit so subsequent verify calls fail with `permit_revoked`. Idempotent.
 
 ```
@@ -155,6 +166,8 @@ Output: { revoked, permit_id, ... }
 ```
 
 ### `atlasent_permit` — issue a permit token out-of-band
+
+> **Mutating tool — gated off when `ATLASENT_MCP_READONLY=1`.**
 
 Mint a time-limited permit for a subject/action/resource outside of the standard evaluate flow — for example when a human pre-approves access.
 
@@ -203,6 +216,8 @@ Output: { execution_id, outcome, recorded_at, ... }
 
 ### `atlasent_create_webhook` — register a webhook
 
+> **Mutating tool — gated off when `ATLASENT_MCP_READONLY=1`.**
+
 Subscribe an external HTTPS endpoint to real-time AtlaSent events (e.g. `evaluation.deny`, `approval.requested`, `permit.revoked`).
 
 ```
@@ -211,6 +226,8 @@ Output: { webhook_id, url, events, secret?, ... }
 ```
 
 ### `atlasent_delete_webhook` — remove a webhook
+
+> **Destructive tool — gated off when `ATLASENT_MCP_READONLY=1`.**
 
 Permanently deregister a webhook. AtlaSent stops sending events to that URL immediately.
 
@@ -338,6 +355,32 @@ The engine behind `authorize()` is pluggable. The same tool handlers work in bot
 | `ATLASENT_API_KEY` | remote only | — | Bearer token for the hosted API |
 | `ATLASENT_BASE_URL` | remote only | `https://api.atlasent.com` | Hosted API base URL |
 | `ATLASENT_ANON_KEY` | no | — | Optional `x-anon-key` header |
+| `ATLASENT_MCP_RATE_LIMIT` | no | `600` | Per-tool calls per minute (token bucket) |
+| `ATLASENT_MCP_READONLY` | no | (unset) | If `1` or `true`, skip registration of the 7 mutating tools. **Recommended for live-API demos.** See [Read-only mode](#read-only-mode-for-live-demos). |
+
+## Read-only mode (for live demos)
+
+In `local` mode, every tool either calls the in-process rules engine or short-circuits with no side effects, so it doesn't matter what the agent tries to do. The story is different the moment you point the server at a live AtlaSent backend with `ATLASENT_MODE=remote` and a real API key: the mutating CRUD tools call the hosted API **directly**. They do not go through the `authorize()` interception. An adversarial prompt, a hallucinated "let me clean up" step, or a tool-misuse mistake by the agent can damage real demo-org state.
+
+Set `ATLASENT_MCP_READONLY=1` (or `true`) and the server will skip registration of these 7 tools at startup:
+
+- `atlasent_create_policy`
+- `atlasent_update_policy`
+- `atlasent_delete_policy`
+- `atlasent_create_webhook`
+- `atlasent_delete_webhook`
+- `atlasent_revoke_permit`
+- `atlasent_permit`
+
+Everything else stays available, including the full demo flow:
+
+- The agent-gating loop (`evaluate` → `verify_permit`) and the protected-tool demo (`deploy_service`)
+- All read tools (`atlasent_list_policies`, `atlasent_get_policy`, `atlasent_list_permits`, `atlasent_list_audit_events`, `atlasent_evaluate`, `atlasent_verify_permit`)
+- The approval-request workflow (`atlasent_create_approval_request`, `atlasent_resolve_approval_request`, `atlasent_record_execution_evaluation`)
+
+On startup, the server emits a `server.readonly_mode` structured log line to stderr listing the disabled tools so the operator can confirm the gate is active.
+
+**When to enable:** any live demo (customer call, conference, screencast) that uses a real API key — even on a dedicated demo org. The cost is zero (the read flow, the approval flow, and the `deploy_service` proof all stay functional); the upside is that no LLM mishap can destroy live state. Disable the flag only when you are intentionally exercising the mutating tools from a trusted operator console.
 
 ## Claude Desktop config
 
@@ -350,7 +393,8 @@ The engine behind `authorize()` is pluggable. The same tool handlers work in bot
       "env": {
         "ATLASENT_MODE": "remote",
         "ATLASENT_API_KEY": "as_live_xxxxxxxxxxxxxxxx",
-        "ATLASENT_BASE_URL": "https://api.atlasent.com"
+        "ATLASENT_BASE_URL": "https://api.atlasent.com",
+        "ATLASENT_MCP_READONLY": "1"
       }
     }
   }
@@ -358,6 +402,8 @@ The engine behind `authorize()` is pluggable. The same tool handlers work in bot
 ```
 
 Location: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
+
+Remove `ATLASENT_MCP_READONLY` from `env` only when you intend to use the mutating CRUD tools from a trusted operator session.
 
 ## Cursor config
 
@@ -368,6 +414,7 @@ Add to `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json` globally
 ```bash
 claude mcp add atlasent -- npx -y @atlasent/mcp-server
 export ATLASENT_API_KEY=as_live_xxxxxxxxxxxxxxxx
+export ATLASENT_MCP_READONLY=1   # safe default; unset for ops sessions
 ```
 
 ## Fail-closed guarantees
@@ -401,7 +448,7 @@ The remote adapter (`src/engine.ts`) speaks the AtlaSent API edge-function shape
 ```bash
 npm install
 npm run build              # compile TypeScript
-npm test                   # 26 unit tests (local + remote mocked)
+npm test                   # 26 unit tests (local + remote mocked) + readonly-mode tests
 npm run test:integration   # requires ATLASENT_API_KEY + ATLASENT_BASE_URL; skips otherwise
 npm run demo               # end-to-end authorization demo (local mode)
 ```
