@@ -21,6 +21,14 @@ import { authorizeLocal, verifyLocal } from "./localEngine.js";
 const VERSION = "1.0.0";
 const REQUEST_TIMEOUT_MS = 10_000;
 
+// AbortSignal.timeout() is not available in all Node 22 environments;
+// use AbortController + setTimeout for broad compatibility.
+function makeAbortSignal(ms: number): AbortSignal {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
 export type Mode = "local" | "remote";
 
 export function getMode(): Mode {
@@ -92,7 +100,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     method: "POST",
     headers: buildHeaders(),
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: makeAbortSignal(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -106,7 +114,7 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
     method: "PATCH",
     headers: buildHeaders(),
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: makeAbortSignal(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -127,7 +135,7 @@ async function get<T>(path: string, params?: Record<string, string | undefined>)
   const res = await fetch(url, {
     method: "GET",
     headers: buildHeaders(),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: makeAbortSignal(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -504,7 +512,7 @@ async function del<T>(path: string, params?: Record<string, string | undefined>)
   const res = await fetch(url, {
     method: "DELETE",
     headers: buildHeaders(),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: makeAbortSignal(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
