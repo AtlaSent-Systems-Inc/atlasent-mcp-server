@@ -42,7 +42,7 @@ examples/
 Every protected tool follows the same pattern. See `server.ts`, the `deploy_service` handler:
 
 ```ts
-const ctx: ActionContext = { action_type: "deploy", actor_id, environment, ... };
+const ctx: ActionContext = { action_type: "deployment.production", actor_id, environment, ... };
 const decision = await authorize(ctx);       // INTERCEPTION POINT
 if (decision.decision !== "allow") {
   return toolResult(decision);                // blocked; nothing executes

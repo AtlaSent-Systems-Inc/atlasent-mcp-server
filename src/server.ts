@@ -376,7 +376,7 @@ export function createServer(): McpServer {
         return toolResult(decision);
       }
       const ctx: ActionContext = {
-        action_type: "deploy",
+        action_type: "deployment.production",
         actor_id: args.actor_id,
         environment: args.environment,
         ...(args.approvals ? { approvals: args.approvals } : {}),
@@ -426,7 +426,7 @@ export function createServer(): McpServer {
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("What action is being performed (e.g. 'deploy:production', 'records:delete')."),
+          .describe("What action is being performed (e.g. 'deployment.production', 'records.delete')."),
         resource: z
           .string()
           .min(1)
@@ -1045,7 +1045,7 @@ export function createServer(): McpServer {
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("The action being permitted (e.g. 'deploy:production')."),
+          .describe("The action being permitted (e.g. 'deployment.production')."),
         resource: z
           .string()
           .min(1)

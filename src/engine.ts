@@ -270,7 +270,7 @@ export async function evaluateAction(params: EvaluateParams): Promise<EvaluateRe
     org_id: params.org_id,
   };
   if (params.context !== undefined) body.context = params.context;
-  return post<EvaluateResponse>("/v1/evaluate", body);
+  return post<EvaluateResponse>("/v1-evaluate", body);
 }
 
 export interface ListPoliciesParams {

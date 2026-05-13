@@ -26,7 +26,7 @@ This is a **major version bump** (v2 config schema).
 
 | Tool | v1 | v2 |
 |------|----|-----------|
-| `evaluate_action` | Direct Supabase edge function call | `POST /v1/evaluate` |
+| `evaluate_action` | Direct Supabase edge function call | `POST /v1-evaluate` |
 | `get_audit_events` | `supabase.from('audit_events').select()` | `GET /v1/audit/events` |
 | `create_policy` | `supabase.from('policies').insert()` | `POST /v1/policies` |
 | `get_session` | `supabase.auth.getSession()` | `GET /v1/session` |
