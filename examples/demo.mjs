@@ -150,7 +150,7 @@ async function main() {
     name: "verify_permit",
     arguments: {
       permit_token: allowedDecision.permit_token,
-      action_type: "deploy",
+      action_type: "deployment.production",
       actor_id: "agent-copilot-7",
       environment: "production",
       approvals: ["ticket-42"],

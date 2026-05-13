@@ -9,7 +9,7 @@ import { createServer, _resetRateLimitForTests } from "./server.js";
 // ---------------------------------------------------------------------------
 
 const EVAL_ARGS = {
-  action_type: "deploy",
+  action_type: "deployment.production",
   actor_id: "user-1",
   environment: "production",
 };
@@ -244,7 +244,7 @@ describe("evaluate (remote mode)", () => {
     assert.ok(headers["User-Agent"].startsWith("@atlasent/mcp-server/"));
 
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
-    assert.equal(body.action_type, "deploy");
+    assert.equal(body.action_type, "deployment.production");
     assert.equal(body.actor_id, "user-1");
     assert.deepEqual(body.context, {
       environment: "production",
@@ -502,7 +502,7 @@ describe("deploy_service (authorization-gated)", () => {
       },
     });
     const data = parseResult(result);
-    // action_type is "deploy" in this tool, so destructive rule doesn't fire.
+    // action_type is "deployment.production" in this tool, so destructive rule doesn't fire.
     // This one should allow.
     assert.equal(data.decision, "allow");
   });
@@ -632,7 +632,7 @@ describe("atlasent_create_policy", () => {
       arguments: {
         org_id: "org_1",
         policy_id: "deploy-gate",
-        title: "Production deploy gate",
+        title: "Deployment production gate",
         policy_type: "access_control",
         rules: [{ when: "env=production", require: "approvals>=2" }],
       },
@@ -805,7 +805,7 @@ describe("atlasent_permit", () => {
       name: "atlasent_permit",
       arguments: {
         subject: "user:alice",
-        action: "deploy:production",
+        action: "deployment.production",
         resource: "env:prod",
         org_id: "org_abc",
       },
@@ -823,7 +823,7 @@ describe("atlasent_permit", () => {
       name: "atlasent_permit",
       arguments: {
         subject: "user:alice",
-        action: "deploy:production",
+        action: "deployment.production",
         resource: "env:prod",
         org_id: "org_abc",
       },
@@ -839,7 +839,7 @@ describe("atlasent_permit", () => {
     const result = await client.callTool({
       name: "atlasent_permit",
       arguments: {
-        action: "deploy:production",
+        action: "deployment.production",
         resource: "env:prod",
         org_id: "org_abc",
       },
