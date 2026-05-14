@@ -423,7 +423,7 @@ export function createServer(): McpServer {
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("What action is being performed (e.g. 'deployment.production', 'records.delete')."),
+          .describe("What action is being performed (e.g. 'production.deploy', 'records.delete')."),
         actor_id: actorId,
         environment,
         context: z
@@ -821,7 +821,7 @@ export function createServer(): McpServer {
             .string()
             .min(1)
             .max(MAX_FIELD_LEN)
-            .describe("The action being permitted (e.g. 'deployment.production')."),
+            .describe("The action being permitted (e.g. 'production.deploy')."),
           actor_id: actorId,
           environment,
           ttl_seconds: z

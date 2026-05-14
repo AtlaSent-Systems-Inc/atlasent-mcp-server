@@ -24,7 +24,7 @@ Scenario A: agent attempts unauthorized deploy (prod, no approvals)
     [2] MCP intercepts → calls authorize(ctx) → policy engine decides
     [3] Tool execution BLOCKED
         ✓ deploy did NOT run. The target system was not touched.
-        ✓ reason: Production action 'deployment.production' requires at least one approval...
+        ✓ reason: Production action 'production.deploy' requires at least one approval...
 
 Scenario B: agent attempts authorized deploy (prod, with approval)
     [1] Agent calls deploy_service with approval
@@ -63,7 +63,7 @@ Output: { decision, permit_token?, evaluation_id?, reason?, ... }
 ```json
 {
   "subject": "user:alice",
-  "action": "deployment.production",
+  "action": "production.deploy",
   "resource": "env:prod",
   "org_id": "org_abc123",
   "context": { "ip": "10.0.0.1" }
