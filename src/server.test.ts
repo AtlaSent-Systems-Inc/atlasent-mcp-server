@@ -9,7 +9,7 @@ import { createServer, _resetRateLimitForTests } from "./server.js";
 // ---------------------------------------------------------------------------
 
 const EVAL_ARGS = {
-  action_type: "deployment.production",
+  action_type: "production.deploy",
   actor_id: "user-1",
   environment: "production",
 };
@@ -244,7 +244,7 @@ describe("evaluate (remote mode)", () => {
     assert.ok(headers["User-Agent"].startsWith("@atlasent/mcp-server/"));
 
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
-    assert.equal(body.action_type, "deployment.production");
+    assert.equal(body.action_type, "production.deploy");
     assert.equal(body.actor_id, "user-1");
     assert.deepEqual(body.context, {
       environment: "production",
@@ -502,7 +502,7 @@ describe("deploy_service (authorization-gated)", () => {
       },
     });
     const data = parseResult(result);
-    // action_type is "deployment.production" in this tool, so destructive rule doesn't fire.
+    // action_type is "production.deploy" in this tool, so destructive rule doesn't fire.
     // This one should allow.
     assert.equal(data.decision, "allow");
   });
@@ -805,7 +805,7 @@ describe("atlasent_permit", () => {
       name: "atlasent_permit",
       arguments: {
         subject: "user:alice",
-        action: "deployment.production",
+        action: "production.deploy",
         resource: "env:prod",
         org_id: "org_abc",
       },
@@ -823,7 +823,7 @@ describe("atlasent_permit", () => {
       name: "atlasent_permit",
       arguments: {
         subject: "user:alice",
-        action: "deployment.production",
+        action: "production.deploy",
         resource: "env:prod",
         org_id: "org_abc",
       },
@@ -839,7 +839,7 @@ describe("atlasent_permit", () => {
     const result = await client.callTool({
       name: "atlasent_permit",
       arguments: {
-        action: "deployment.production",
+        action: "production.deploy",
         resource: "env:prod",
         org_id: "org_abc",
       },
