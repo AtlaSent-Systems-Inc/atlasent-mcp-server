@@ -414,32 +414,35 @@ export function createServer(): McpServer {
     {
       title: "AtlaSent — Evaluate (Remote API)",
       description:
-        "Evaluate an action_type against your published AtlaSent policies. " +
+        "Evaluate an action against your published AtlaSent policies. " +
         "Returns allow/deny/hold/escalate with a permit_token on allow. " +
         "Use this when ATLASENT_MODE=remote and you need to gate an action " +
         "against your hosted policy engine.",
       inputSchema: z.object({
-        action_type: z
+        subject: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("The actor performing the action (e.g. 'user:alice', 'service:deploy-bot')."),
+        action: z
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
           .describe("What action is being performed (e.g. 'production.deploy', 'records.delete')."),
-        actor_id: actorId,
-        environment,
+        resource: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("The resource being acted on (e.g. 'env:prod', 'db:customers')."),
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID that owns the policy."),
         context: z
           .record(z.unknown())
           .optional()
           .describe("Key-value context matched against constraint rules."),
-        request_id: z
-          .string()
-          .min(1)
-          .max(MAX_FIELD_LEN)
-          .optional()
-          .describe("Idempotency key — same request_id returns the original decision."),
-        enforcement_mode: z
-          .enum(["enforce", "log"])
-          .optional()
-          .describe("enforce (default) blocks on deny; log records but allows."),
       }),
       annotations: {
         title: "AtlaSent — Evaluate (Remote API)",
@@ -456,12 +459,11 @@ export function createServer(): McpServer {
         return toolResult({ decision: "deny", reason: "MCP tool rate limit exceeded — slow down and retry" });
       }
       const result = await evaluateAction({
-        action_type: args.action_type,
-        actor_id: args.actor_id,
-        environment: args.environment,
+        subject: args.subject,
+        action: args.action,
+        resource: args.resource,
+        org_id: args.org_id,
         context: args.context,
-        request_id: args.request_id,
-        enforcement_mode: args.enforcement_mode,
       });
       log("atlasent_evaluate", { result });
       return toolResult(result);
@@ -477,15 +479,16 @@ export function createServer(): McpServer {
       title: "AtlaSent — List Policies",
       description: "List all constraint bundles / policies for this organization.",
       inputSchema: z.object({
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID to list policies for."),
         status: z
-          .enum(["draft", "published", "archived"])
-          .optional()
-          .describe("Filter by status."),
-        action_type: z
           .string()
           .max(MAX_FIELD_LEN)
           .optional()
-          .describe("Filter to policies that apply to this action_type."),
+          .describe("Filter by status (e.g. 'draft', 'published', 'archived')."),
       }),
       annotations: {
         title: "AtlaSent — List Policies",
@@ -498,7 +501,7 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_list_policies")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await listPolicies({ status: args.status, action_type: args.action_type });
+      const result = await listPolicies({ org_id: args.org_id, status: args.status });
       return toolResult(result);
     },
   );
@@ -517,6 +520,11 @@ export function createServer(): McpServer {
           .min(1)
           .max(MAX_FIELD_LEN)
           .describe("The bundle ID returned by list_policies or create_policy."),
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID that owns the policy."),
       }),
       annotations: {
         title: "AtlaSent — Get Policy",
@@ -529,7 +537,7 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_get_policy")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await getPolicy(args.policy_id);
+      const result = await getPolicy({ policy_id: args.policy_id, org_id: args.org_id });
       return toolResult(result);
     },
   );
@@ -543,6 +551,26 @@ export function createServer(): McpServer {
       title: "AtlaSent — List Audit Events",
       description: "Retrieve recent evaluation events from the audit log.",
       inputSchema: z.object({
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID to fetch audit events for."),
+        evaluation_id: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Filter to events for a specific evaluation ID."),
+        from: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("ISO-8601 start timestamp for the query window."),
+        to: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("ISO-8601 end timestamp for the query window."),
         limit: z
           .number()
           .int()
@@ -550,15 +578,6 @@ export function createServer(): McpServer {
           .max(100)
           .optional()
           .describe("Max number of events to return (default 20, max 100)."),
-        action_type: z
-          .string()
-          .max(MAX_FIELD_LEN)
-          .optional()
-          .describe("Filter to events for this action_type."),
-        decision: z
-          .enum(["allow", "deny", "hold", "escalate"])
-          .optional()
-          .describe("Filter to events with this decision."),
       }),
       annotations: {
         title: "AtlaSent — List Audit Events",
@@ -571,7 +590,13 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_list_audit_events")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await listAuditEvents({ limit: args.limit, action_type: args.action_type, decision: args.decision });
+      const result = await listAuditEvents({
+        org_id: args.org_id,
+        evaluation_id: args.evaluation_id,
+        from: args.from,
+        to: args.to,
+        limit: args.limit,
+      });
       return toolResult(result);
     },
   );
@@ -585,29 +610,65 @@ export function createServer(): McpServer {
       {
         title: "AtlaSent — Create Policy",
         description:
-          "Create a new constraint bundle for an action_type. " +
+          "Create a new constraint bundle for an action. " +
           "The bundle starts in 'draft' status — call update_policy to publish it.",
         inputSchema: z.object({
-          action_type: z
+          org_id: z
             .string()
             .min(1)
             .max(MAX_FIELD_LEN)
-            .describe("The action_type this policy governs (e.g. 'records.delete')."),
-          name: z
+            .describe("Organization ID that will own the policy."),
+          policy_id: z
             .string()
             .min(1)
             .max(MAX_FIELD_LEN)
-            .describe("Human-readable policy name."),
+            .describe("Client-assigned unique ID for this policy bundle (e.g. 'deploy-gate')."),
+          title: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("Human-readable policy title."),
+          policy_type: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("Policy type (e.g. 'access_control', 'approval_gate')."),
           rules: z
-            .array(
-              z.object({
-                conditions: z.record(z.unknown()).describe("Match conditions for this rule."),
-                outcome: z.enum(["allow", "deny", "hold", "escalate"]).describe("Outcome when conditions match."),
-                deny_reason: z.string().max(MAX_FIELD_LEN).optional().describe("Human-readable reason (deny/hold only)."),
-                label: z.string().max(MAX_FIELD_LEN).optional().describe("Short label for this rule."),
-              }),
-            )
+            .array(z.record(z.unknown()))
             .describe("Ordered list of rules — first match wins."),
+          description: z
+            .string()
+            .max(MAX_FIELD_LEN)
+            .optional()
+            .describe("Optional human-readable description."),
+          version: z
+            .string()
+            .max(MAX_FIELD_LEN)
+            .optional()
+            .describe("Semantic version string (e.g. '1.0.0')."),
+          priority: z
+            .number()
+            .int()
+            .optional()
+            .describe("Evaluation priority (lower number = higher priority)."),
+          applies_to: z
+            .record(z.unknown())
+            .optional()
+            .describe("Scope selector controlling which requests this policy applies to."),
+          actions: z
+            .record(z.unknown())
+            .optional()
+            .describe("Action-specific configuration."),
+          effective_at: z
+            .string()
+            .max(MAX_FIELD_LEN)
+            .optional()
+            .describe("ISO-8601 timestamp when the policy becomes effective."),
+          expires_at: z
+            .string()
+            .max(MAX_FIELD_LEN)
+            .optional()
+            .describe("ISO-8601 timestamp when the policy expires."),
         }),
         annotations: {
           title: "AtlaSent — Create Policy",
@@ -621,9 +682,18 @@ export function createServer(): McpServer {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
         const result = await createPolicy({
-          action_type: args.action_type,
-          name: args.name,
+          org_id: args.org_id,
+          policy_id: args.policy_id,
+          title: args.title,
+          policy_type: args.policy_type,
           rules: args.rules,
+          description: args.description,
+          version: args.version,
+          priority: args.priority,
+          applies_to: args.applies_to,
+          actions: args.actions,
+          effective_at: args.effective_at,
+          expires_at: args.expires_at,
         });
         return toolResult(result);
       },
@@ -639,7 +709,7 @@ export function createServer(): McpServer {
       {
         title: "AtlaSent — Update Policy",
         description:
-          "Update a constraint bundle — change rules, name, or publish/archive it. " +
+          "Update a constraint bundle — change rules, title, or publish/archive it. " +
           "Only fields you provide are updated; omitted fields are unchanged.",
         inputSchema: z.object({
           policy_id: z
@@ -647,27 +717,58 @@ export function createServer(): McpServer {
             .min(1)
             .max(MAX_FIELD_LEN)
             .describe("ID of the bundle to update."),
-          name: z
+          org_id: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("Organization ID that owns the policy."),
+          title: z
             .string()
             .min(1)
             .max(MAX_FIELD_LEN)
             .optional()
-            .describe("New name for the policy."),
+            .describe("New title for the policy."),
           status: z
-            .enum(["draft", "published", "archived"])
+            .string()
             .optional()
-            .describe("Set to 'published' to activate, 'archived' to deactivate."),
+            .describe("New lifecycle status (e.g. 'draft', 'published', 'archived', 'enforce')."),
+          priority: z
+            .number()
+            .int()
+            .optional()
+            .describe("New evaluation priority (lower number = higher priority)."),
           rules: z
-            .array(
-              z.object({
-                conditions: z.record(z.unknown()),
-                outcome: z.enum(["allow", "deny", "hold", "escalate"]),
-                deny_reason: z.string().max(MAX_FIELD_LEN).optional(),
-                label: z.string().max(MAX_FIELD_LEN).optional(),
-              }),
-            )
+            .array(z.record(z.unknown()))
             .optional()
             .describe("Replacement rules array (replaces all existing rules)."),
+          description: z
+            .string()
+            .max(MAX_FIELD_LEN)
+            .optional()
+            .describe("New description."),
+          version: z
+            .string()
+            .max(MAX_FIELD_LEN)
+            .optional()
+            .describe("New semantic version string."),
+          applies_to: z
+            .record(z.unknown())
+            .optional()
+            .describe("Updated scope selector."),
+          actions: z
+            .record(z.unknown())
+            .optional()
+            .describe("Updated action-specific configuration."),
+          effective_at: z
+            .string()
+            .max(MAX_FIELD_LEN)
+            .optional()
+            .describe("Updated ISO-8601 effective timestamp."),
+          expires_at: z
+            .string()
+            .max(MAX_FIELD_LEN)
+            .optional()
+            .describe("Updated ISO-8601 expiry timestamp."),
         }),
         annotations: {
           title: "AtlaSent — Update Policy",
@@ -680,10 +781,19 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_update_policy")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await updatePolicy(args.policy_id, {
-          name: args.name,
+        const result = await updatePolicy({
+          policy_id: args.policy_id,
+          org_id: args.org_id,
+          title: args.title,
           status: args.status,
+          priority: args.priority,
           rules: args.rules,
+          description: args.description,
+          version: args.version,
+          applies_to: args.applies_to,
+          actions: args.actions,
+          effective_at: args.effective_at,
+          expires_at: args.expires_at,
         });
         return toolResult(result);
       },
@@ -705,6 +815,11 @@ export function createServer(): McpServer {
             .min(1)
             .max(MAX_FIELD_LEN)
             .describe("ID of the bundle to delete."),
+          org_id: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("Organization ID that owns the policy."),
         }),
         annotations: {
           title: "AtlaSent — Delete Policy",
@@ -717,7 +832,7 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_delete_policy")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await deletePolicy(args.policy_id);
+        const result = await deletePolicy({ policy_id: args.policy_id, org_id: args.org_id });
         return toolResult(result);
       },
     );
@@ -732,14 +847,19 @@ export function createServer(): McpServer {
       {
         title: "AtlaSent — Revoke Permit",
         description:
-          "Revoke a permit_token before it expires. The token immediately becomes " +
+          "Revoke a permit before it expires. The permit immediately becomes " +
           "invalid for verify_permit calls.",
         inputSchema: z.object({
-          permit_token: z
+          permit_id: z
             .string()
             .min(1)
             .max(MAX_FIELD_LEN)
-            .describe("The permit_token to revoke."),
+            .describe("The permit ID to revoke."),
+          org_id: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("Organization ID that owns the permit."),
           reason: z
             .string()
             .max(MAX_FIELD_LEN)
@@ -757,7 +877,11 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_revoke_permit")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await revokePermit(args.permit_token, args.reason);
+        const result = await revokePermit({
+          permit_id: args.permit_id,
+          org_id: args.org_id,
+          reason: args.reason,
+        });
         return toolResult(result);
       },
     );
@@ -772,6 +896,11 @@ export function createServer(): McpServer {
       title: "AtlaSent — List Permits",
       description: "List issued permit tokens for audit and monitoring.",
       inputSchema: z.object({
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID to list permits for."),
         limit: z
           .number()
           .int()
@@ -779,15 +908,35 @@ export function createServer(): McpServer {
           .max(100)
           .optional()
           .describe("Max number of permits to return (default 20)."),
+        status: z
+          .enum(["active", "consumed", "expired", "revoked", "issued"])
+          .optional()
+          .describe("Filter by permit status."),
+        actor_id: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Filter to permits issued for this actor."),
         action_type: z
           .string()
           .max(MAX_FIELD_LEN)
           .optional()
-          .describe("Filter to permits for this action_type."),
-        status: z
-          .enum(["active", "consumed", "expired", "revoked"])
+          .describe("Filter to permits for this action type."),
+        from: z
+          .string()
+          .max(MAX_FIELD_LEN)
           .optional()
-          .describe("Filter by permit status."),
+          .describe("ISO-8601 start timestamp filter."),
+        to: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("ISO-8601 end timestamp filter."),
+        cursor: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Pagination cursor from a previous response."),
       }),
       annotations: {
         title: "AtlaSent — List Permits",
@@ -800,7 +949,16 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_list_permits")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await listPermits({ limit: args.limit, action_type: args.action_type, status: args.status });
+      const result = await listPermits({
+        org_id: args.org_id,
+        limit: args.limit,
+        status: args.status,
+        actor_id: args.actor_id,
+        action_type: args.action_type,
+        from: args.from,
+        to: args.to,
+        cursor: args.cursor,
+      });
       return toolResult(result);
     },
   );
@@ -814,16 +972,29 @@ export function createServer(): McpServer {
       {
         title: "AtlaSent — Issue Permit",
         description:
-          "Manually issue a permit_token for an action. Use for pre-authorized " +
+          "Manually issue a permit token for an action. Use for pre-authorized " +
           "operations where a full evaluate call is not practical.",
         inputSchema: z.object({
-          action_type: z
+          subject: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("The actor the permit is issued for (e.g. 'user:alice')."),
+          action: z
             .string()
             .min(1)
             .max(MAX_FIELD_LEN)
             .describe("The action being permitted (e.g. 'production.deploy')."),
-          actor_id: actorId,
-          environment,
+          resource: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("The resource the permit applies to (e.g. 'env:prod')."),
+          org_id: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("Organization ID that owns the policy."),
           ttl_seconds: z
             .number()
             .int()
@@ -831,10 +1002,10 @@ export function createServer(): McpServer {
             .max(86400)
             .optional()
             .describe("How long the permit is valid in seconds (default 300, max 86400)."),
-          scopes: z
-            .array(z.string().min(1).max(MAX_FIELD_LEN))
+          context: z
+            .record(z.unknown())
             .optional()
-            .describe("Optional scope qualifiers for the permit."),
+            .describe("Optional context to bind to the permit."),
         }),
         annotations: {
           title: "AtlaSent — Issue Permit",
@@ -848,11 +1019,12 @@ export function createServer(): McpServer {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
         const result = await issuePermit({
-          action_type: args.action_type,
-          actor_id: args.actor_id,
-          environment: args.environment,
+          subject: args.subject,
+          action: args.action,
+          resource: args.resource,
+          org_id: args.org_id,
           ttl_seconds: args.ttl_seconds,
-          scopes: args.scopes,
+          context: args.context,
         });
         return toolResult(result);
       },
@@ -860,15 +1032,14 @@ export function createServer(): McpServer {
   }
 
   // -------------------------------------------------------------------------
-  // atlasent_verify_permit_v1
+  // atlasent_verify_permit
   // -------------------------------------------------------------------------
   server.registerTool(
-    "atlasent_verify_permit_v1",
+    "atlasent_verify_permit",
     {
       title: "AtlaSent — Verify Permit (V1)",
       description:
-        "Verify a permit_token with full binding inputs against the V1 endpoint. " +
-        "Requires action_type, actor_id, environment, and context/fingerprint. " +
+        "Verify a permit token with full binding inputs against the V1 endpoint. " +
         "Use this for production verification — under-specified verification is a bypass vector.",
       inputSchema: z.object({
         permit_token: z
@@ -876,32 +1047,23 @@ export function createServer(): McpServer {
           .min(1)
           .max(MAX_FIELD_LEN)
           .describe("The permit_token from a prior evaluate call."),
-        action_type: z
+        org_id: z
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("Must match the action_type from the evaluate call."),
-        actor_id: actorId,
-        environment,
-        context: z
-          .record(z.unknown())
-          .optional()
-          .describe("Full context used in the evaluate call (fingerprint computed server-side)."),
-        context_fingerprint: z
+          .describe("Organization ID that issued the permit."),
+        action: z
           .string()
+          .min(1)
           .max(MAX_FIELD_LEN)
           .optional()
-          .describe("Pre-computed SHA-256 fingerprint — provide this OR context."),
-        nonce: z
+          .describe("Action to verify the permit against."),
+        resource: z
           .string()
+          .min(1)
           .max(MAX_FIELD_LEN)
           .optional()
-          .describe("One-time nonce for replay protection."),
-        request_id: z
-          .string()
-          .max(MAX_FIELD_LEN)
-          .optional()
-          .describe("Idempotency key for the verification call."),
+          .describe("Resource to verify the permit against."),
       }),
       annotations: {
         title: "AtlaSent — Verify Permit (V1)",
@@ -911,18 +1073,14 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
-      if (!rateLimitOk("atlasent_verify_permit_v1")) {
+      if (!rateLimitOk("atlasent_verify_permit")) {
         return toolResult({ valid: false, outcome: "error", reason: "MCP tool rate limit exceeded" });
       }
       const result = await verifyPermitV1({
         permit_token: args.permit_token,
-        action_type: args.action_type,
-        actor_id: args.actor_id,
-        environment: args.environment,
-        context: args.context,
-        context_fingerprint: args.context_fingerprint,
-        nonce: args.nonce,
-        request_id: args.request_id,
+        org_id: args.org_id,
+        action: args.action,
+        resource: args.resource,
       });
       return toolResult(result);
     },
@@ -937,32 +1095,38 @@ export function createServer(): McpServer {
       title: "AtlaSent — Create Approval Request",
       description:
         "Create an approval request for a held action. The request ID is returned " +
-        "in the evaluate response when decision is 'hold'. Submit approvals via " +
-        "atlasent_resolve_approval.",
+        "in the evaluate response when decision is 'hold'. Submit resolution via " +
+        "atlasent_resolve_approval_request.",
       inputSchema: z.object({
-        action_type: z
+        subject: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("The actor requesting the approval (e.g. 'user:alice')."),
+        action: z
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
           .describe("The action requiring approval (e.g. 'delete:production-db')."),
-        actor_id: actorId,
-        environment,
+        resource: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("The resource the action targets (e.g. 'db:prod-postgres')."),
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID that owns the policy."),
+        justification: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Human-readable justification for why the action is needed."),
         context: z
           .record(z.unknown())
           .optional()
           .describe("Context from the original evaluate call."),
-        required_approvals: z
-          .array(z.string().min(1).max(MAX_FIELD_LEN))
-          .max(MAX_APPROVALS)
-          .optional()
-          .describe("Identifiers of required approvers (e.g. email addresses, group names)."),
-        expires_in_seconds: z
-          .number()
-          .int()
-          .min(60)
-          .max(86400)
-          .optional()
-          .describe("How long the approval window is open in seconds (default 3600)."),
       }),
       annotations: {
         title: "AtlaSent — Create Approval Request",
@@ -976,75 +1140,81 @@ export function createServer(): McpServer {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
       const result = await createApprovalRequest({
-        action_type: args.action_type,
-        actor_id: args.actor_id,
-        environment: args.environment,
+        subject: args.subject,
+        action: args.action,
+        resource: args.resource,
+        org_id: args.org_id,
+        justification: args.justification,
         context: args.context,
-        required_approvals: args.required_approvals,
-        expires_in_seconds: args.expires_in_seconds,
       });
       return toolResult(result);
     },
   );
 
   // -------------------------------------------------------------------------
-  // atlasent_resolve_approval
+  // atlasent_resolve_approval_request
   // -------------------------------------------------------------------------
   server.registerTool(
-    "atlasent_resolve_approval",
+    "atlasent_resolve_approval_request",
     {
-      title: "AtlaSent — Resolve Approval",
+      title: "AtlaSent — Resolve Approval Request",
       description:
-        "Approve or reject an approval request. On approval, the held evaluation " +
-        "may proceed; on rejection, it stays blocked.",
+        "Approve or deny an approval request. On approval, the held evaluation " +
+        "may proceed; on denial, it stays blocked.",
       inputSchema: z.object({
         approval_request_id: z
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
           .describe("The approval_request_id from atlasent_create_approval_request."),
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID that owns the approval request."),
         resolution: z
-          .enum(["approved", "rejected"])
-          .describe("Whether to approve or reject the request."),
+          .enum(["approve", "deny"])
+          .describe("Whether to approve or deny the request."),
         resolver_id: z
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
           .describe("Identity of the person or system resolving the request."),
-        note: z
+        comment: z
           .string()
           .max(MAX_FIELD_LEN)
           .optional()
-          .describe("Optional note explaining the resolution."),
+          .describe("Optional comment explaining the resolution."),
       }),
       annotations: {
-        title: "AtlaSent — Resolve Approval",
+        title: "AtlaSent — Resolve Approval Request",
         readOnlyHint: false,
         destructiveHint: false,
         openWorldHint: false,
       },
     },
     async (args) => {
-      if (!rateLimitOk("atlasent_resolve_approval")) {
+      if (!rateLimitOk("atlasent_resolve_approval_request")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await resolveApprovalRequest(
-        args.approval_request_id,
-        args.resolution,
-        args.resolver_id,
-        args.note,
-      );
+      const result = await resolveApprovalRequest({
+        approval_request_id: args.approval_request_id,
+        org_id: args.org_id,
+        resolution: args.resolution,
+        resolver_id: args.resolver_id,
+        comment: args.comment,
+      });
       return toolResult(result);
     },
   );
 
   // -------------------------------------------------------------------------
-  // atlasent_record_execution
+  // atlasent_record_execution_evaluation
   // -------------------------------------------------------------------------
   server.registerTool(
-    "atlasent_record_execution",
+    "atlasent_record_execution_evaluation",
     {
-      title: "AtlaSent — Record Execution",
+      title: "AtlaSent — Record Execution Evaluation",
       description:
         "Record the outcome of an execution that was permitted by a prior evaluate " +
         "call. Closes the audit loop with the actual execution result.",
@@ -1054,30 +1224,42 @@ export function createServer(): McpServer {
           .min(1)
           .max(MAX_FIELD_LEN)
           .describe("The evaluation_id from the prior evaluate call."),
-        execution_outcome: z
-          .enum(["success", "failure", "partial"])
+        org_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Organization ID that owns the evaluation."),
+        outcome: z
+          .enum(["success", "failure", "skipped"])
           .describe("The actual outcome of the execution."),
-        execution_details: z
+        executed_at: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("ISO-8601 timestamp when the execution completed."),
+        details: z
           .record(z.unknown())
           .optional()
           .describe("Optional details about what was executed and the result."),
       }),
       annotations: {
-        title: "AtlaSent — Record Execution",
+        title: "AtlaSent — Record Execution Evaluation",
         readOnlyHint: false,
         destructiveHint: false,
         openWorldHint: false,
       },
     },
     async (args) => {
-      if (!rateLimitOk("atlasent_record_execution")) {
+      if (!rateLimitOk("atlasent_record_execution_evaluation")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await recordExecutionEvaluation(
-        args.evaluation_id,
-        args.execution_outcome,
-        args.execution_details,
-      );
+      const result = await recordExecutionEvaluation({
+        evaluation_id: args.evaluation_id,
+        org_id: args.org_id,
+        outcome: args.outcome,
+        executed_at: args.executed_at,
+        details: args.details,
+      });
       return toolResult(result);
     },
   );
@@ -1092,14 +1274,23 @@ export function createServer(): McpServer {
         title: "AtlaSent — Create Webhook",
         description: "Register a webhook URL to receive evaluation events.",
         inputSchema: z.object({
+          org_id: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("Organization ID to register the webhook for."),
           url: z
             .string()
             .url()
             .describe("The HTTPS URL to deliver events to."),
           events: z
             .array(z.string().min(1).max(MAX_FIELD_LEN))
-            .optional()
             .describe("Event types to subscribe to (e.g. ['evaluation.deny', 'permit.issued'])."),
+          description: z
+            .string()
+            .max(MAX_FIELD_LEN)
+            .optional()
+            .describe("Optional human-readable description of this webhook."),
           secret: z
             .string()
             .min(8)
@@ -1118,7 +1309,13 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_create_webhook")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await createWebhook({ url: args.url, events: args.events, secret: args.secret });
+        const result = await createWebhook({
+          org_id: args.org_id,
+          url: args.url,
+          events: args.events,
+          description: args.description,
+          secret: args.secret,
+        });
         return toolResult(result);
       },
     );
@@ -1139,6 +1336,11 @@ export function createServer(): McpServer {
             .min(1)
             .max(MAX_FIELD_LEN)
             .describe("ID of the webhook to delete."),
+          org_id: z
+            .string()
+            .min(1)
+            .max(MAX_FIELD_LEN)
+            .describe("Organization ID that owns the webhook."),
         }),
         annotations: {
           title: "AtlaSent — Delete Webhook",
@@ -1151,7 +1353,7 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_delete_webhook")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await deleteWebhook(args.webhook_id);
+        const result = await deleteWebhook({ webhook_id: args.webhook_id, org_id: args.org_id });
         return toolResult(result);
       },
     );
