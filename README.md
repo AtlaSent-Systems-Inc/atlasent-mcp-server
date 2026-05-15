@@ -40,7 +40,7 @@ The demo uses `local` mode (no API key needed). To run the same demo against the
 
 ```bash
 ATLASENT_MODE=remote \
-  ATLASENT_API_KEY=as_live_xxx \
+  ATLASENT_API_KEY=ask_live_xxx \
   ATLASENT_BASE_URL=https://api.atlasent.com \
   ATLASENT_MCP_READONLY=1 \
   npm run demo
@@ -273,7 +273,7 @@ See `src/server.ts` (the `deploy_service` handler) for the exact 20-line pattern
   └─────┬───────┘
         │
         ▼
-  ┌─────────────────────────┐
+  ┌───────────────────────┐
   │    Protected tool       │
   │  (e.g. deploy_service)  │
   └─────┬───────────────────┘
@@ -285,7 +285,7 @@ See `src/server.ts` (the `deploy_service` handler) for the exact 20-line pattern
         │ (2) Decision               │
         │   allow | deny | hold      │
         ▼                            ▼
-  ┌──────────────────────────────────────────┐
+  ┌────────────────────────────────────┐
   │  decision === "allow"?                    │
   └──┬───────────────────────┬───────────────┘
      │ no                    │ yes
@@ -352,7 +352,7 @@ The engine behind `authorize()` is pluggable. The same tool handlers work in bot
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `ATLASENT_MODE` | no | auto-detect | Force `local` or `remote` |
-| `ATLASENT_API_KEY` | remote only | — | Bearer token for the hosted API |
+| `ATLASENT_API_KEY` | remote only | — | Bearer token for the hosted API (prefix: `ask_live_` / `ask_test_`) |
 | `ATLASENT_BASE_URL` | remote only | `https://api.atlasent.com` | Hosted API base URL |
 | `ATLASENT_ANON_KEY` | no | — | Optional `x-anon-key` header |
 | `ATLASENT_MCP_RATE_LIMIT` | no | `600` | Per-tool calls per minute (token bucket) |
@@ -392,7 +392,7 @@ On startup, the server emits a `server.readonly_mode` structured log line to std
       "args": ["-y", "@atlasent/mcp-server"],
       "env": {
         "ATLASENT_MODE": "remote",
-        "ATLASENT_API_KEY": "as_live_xxxxxxxxxxxxxxxx",
+        "ATLASENT_API_KEY": "ask_live_xxxxxxxxxxxxxxxx",
         "ATLASENT_BASE_URL": "https://api.atlasent.com",
         "ATLASENT_MCP_READONLY": "1"
       }
@@ -413,7 +413,7 @@ Add to `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json` globally
 
 ```bash
 claude mcp add atlasent -- npx -y @atlasent/mcp-server
-export ATLASENT_API_KEY=as_live_xxxxxxxxxxxxxxxx
+export ATLASENT_API_KEY=ask_live_xxxxxxxxxxxxxxxx
 export ATLASENT_MCP_READONLY=1   # safe default; unset for ops sessions
 ```
 
