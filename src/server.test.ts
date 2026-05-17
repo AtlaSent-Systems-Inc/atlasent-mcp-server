@@ -77,7 +77,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("tools/list", () => {
-  it("exposes evaluate, verify_permit, deploy_service, and all write tools", async () => {
+  it("exposes evaluate, verify_permit, deploy_service, all write tools, and v2 tools", async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
@@ -88,11 +88,14 @@ describe("tools/list", () => {
       "atlasent_delete_policy",
       "atlasent_delete_webhook",
       "atlasent_evaluate",
+      "atlasent_evaluate_many",
+      "atlasent_evaluate_stream",
       "atlasent_get_policy",
       "atlasent_list_audit_events",
       "atlasent_list_permits",
       "atlasent_list_policies",
       "atlasent_permit",
+      "atlasent_query",
       "atlasent_record_execution_evaluation",
       "atlasent_resolve_approval_request",
       "atlasent_revoke_permit",
