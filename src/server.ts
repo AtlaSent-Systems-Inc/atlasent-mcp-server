@@ -35,6 +35,7 @@ import {
   createWebhook,
   deleteWebhook,
 } from "./engine.js";
+import { registerV2Tools } from "./v2Tools.js";
 
 export const VERSION = "1.0.0";
 
@@ -1428,6 +1429,13 @@ export function createServer(): McpServer {
       },
     );
   }
+
+  // -------------------------------------------------------------------------
+  // V2 Wave B tools — atlasent_evaluate_many, atlasent_evaluate_stream,
+  // atlasent_query. Closed-by-default: 404 from the API surfaces as a
+  // typed `feature_not_enabled` error.
+  // -------------------------------------------------------------------------
+  registerV2Tools(server);
 
   return server;
 }
