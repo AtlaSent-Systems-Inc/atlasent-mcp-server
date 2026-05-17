@@ -2,6 +2,15 @@
 
 **Status:** plan · **Wave:** B (transport) + C (tool surface) · **Updated:** 2026-05-15
 
+> **V1 GA — 2026-05-17.** V1 substrate frozen — the canonical foundation
+> this V2 plan extends. The `/v1/*` wire surface, schema, audit chain,
+> and Ed25519-signed export envelope are stable; V2 work in this plan is
+> **additive** on V1 (no V1 wire/schema/audit-chain changes ship under V2).
+> V2 implementation is unblocked pending umbrella
+> [`V2_DECISIONS.md`](https://github.com/AtlaSent-Systems-Inc/atlasent/blob/main/V2_DECISIONS.md) sign-off.
+> Canonical V1 reference: [`atlasent-api/docs/runtime/golden-path-v1.md`](https://github.com/AtlaSent-Systems-Inc/atlasent-api/blob/main/docs/runtime/golden-path-v1.md).
+> V1 GA closeout PRs: see umbrella [`ROADMAP.md`](https://github.com/AtlaSent-Systems-Inc/atlasent/blob/main/ROADMAP.md) "V1 GA — what closed" section.
+
 MCP server cut of the [umbrella v2 rollout](https://github.com/AtlaSent-Systems-Inc/atlasent/blob/claude/plan-v2-rollout-5IPGF/V2_ROLLOUT.md). Owns the `v2_mcp_streamable_http` flag in `atlasent-control-plane`. Adds batch / stream / GraphQL tool surfaces and behavior-aware tool gates. Closes the gap noted in `atlasent-docs/plans/atlasent-mcp-server.md` (v0.3 → v1.0).
 
 ## Position
