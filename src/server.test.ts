@@ -142,7 +142,8 @@ describe("evaluate (local mode)", () => {
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "deny");
-    assert.ok((data.reason as string).toLowerCase().includes("approval"));
+    assert.ok(Array.isArray(data.reasons), "reasons must be an array");
+    assert.ok((data.reasons as string[]).some((r) => r.toLowerCase().includes("approval")));
     assert.equal(result.isError, true);
   });
 
@@ -217,14 +218,15 @@ describe("evaluate (remote mode)", () => {
     forceRemoteMode();
     globalThis.fetch = mockFetch({
       decision: "escalate",
-      denial: { reason: "needs SRE review", code: "REQUIRES_OVERRIDE" },
+      denial: { reasons: ["needs SRE review"], code: "REQUIRES_OVERRIDE" },
       request_id: "req_2",
     });
     const { client } = await setup();
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "hold");
-    assert.equal(data.reason, "needs SRE review");
+    assert.ok(Array.isArray(data.reasons));
+    assert.equal((data.reasons as string[])[0], "needs SRE review");
     assert.equal(data.audit_id, "req_2");
     assert.equal(result.isError, true);
   });
@@ -278,7 +280,7 @@ describe("evaluate (remote mode)", () => {
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "deny");
-    assert.ok((data.reason as string).includes("ECONNREFUSED"));
+    assert.ok((data.reasons as string[])[0].includes("ECONNREFUSED"));
   });
 
   it("denies when remote allows but returns no permit_token", async () => {
@@ -288,7 +290,7 @@ describe("evaluate (remote mode)", () => {
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "deny");
-    assert.ok((data.reason as string).includes("permit_token"));
+    assert.ok((data.reasons as string[])[0].includes("permit_token"));
   });
 });
 
@@ -360,7 +362,8 @@ describe("verify_permit (local mode)", () => {
     const replay = parseResult(second);
     assert.equal(replay.outcome, "invalid");
     assert.equal(replay.valid, false);
-    assert.match(String(replay.reason ?? ""), /already used/i);
+    assert.ok(Array.isArray(replay.reasons));
+    assert.match(String((replay.reasons as string[])[0] ?? ""), /already used/i);
   });
 });
 
@@ -384,7 +387,7 @@ describe("verify_permit (remote mode)", () => {
       valid: false,
       outcome: "deny",
       verify_error_code: "PERMIT_EXPIRED",
-      reason: "Permit expired at 2026-01-01T00:15:00Z",
+      reasons: ["Permit expired at 2026-01-01T00:15:00Z"],
     });
     const { client } = await setup();
     const result = await client.callTool({
@@ -403,7 +406,7 @@ describe("verify_permit (remote mode)", () => {
       valid: false,
       outcome: "deny",
       verify_error_code: "PERMIT_ALREADY_USED",
-      reason: "This permit token has already been consumed",
+      reasons: ["This permit token has already been consumed"],
     });
     const { client } = await setup();
     const result = await client.callTool({
@@ -424,7 +427,7 @@ describe("verify_permit (remote mode)", () => {
       valid: false,
       outcome: "deny",
       verify_error_code: "RATE_LIMITED",
-      reason: "Too many requests",
+      reasons: ["Too many requests"],
     });
     const { client } = await setup();
     const result = await client.callTool({
@@ -585,7 +588,8 @@ describe("rate limiting (per-tool token bucket)", () => {
     assert.equal(r2.decision, "allow");
     // Third call (within the same minute) trips the limiter.
     assert.equal(r3.decision, "deny");
-    assert.match(String(r3.reason ?? ""), /rate limit/i);
+    assert.ok(Array.isArray(r3.reasons));
+    assert.match(String((r3.reasons as string[])[0] ?? ""), /rate limit/i);
   });
 });
 
@@ -704,7 +708,7 @@ describe("atlasent_update_policy", () => {
 });
 
 describe("atlasent_revoke_permit", () => {
-  it("POSTs to /v1/permits/:id/revoke with org and reason", async () => {
+  it("POSTs to /v1/permits/:permitToken/revoke with org and reasons", async () => {
     forceRemoteMode();
     const { fn, captured } = captureFetch({
       id: "permit_42",
@@ -716,9 +720,9 @@ describe("atlasent_revoke_permit", () => {
     const result = await client.callTool({
       name: "atlasent_revoke_permit",
       arguments: {
-        permit_id: "permit_42",
+        permitToken: "permit_42",
         org_id: "org_1",
-        reason: "compromised actor",
+        reasons: ["compromised actor"],
       },
     });
     const data = parseResult(result);
@@ -728,20 +732,20 @@ describe("atlasent_revoke_permit", () => {
     assert.match(captured[0].url, /\/v1\/permits\/permit_42\/revoke$/);
     const body = captured[0].body as Record<string, unknown>;
     assert.equal(body.org_id, "org_1");
-    assert.equal(body.reason, "compromised actor");
+    assert.deepEqual(body.reasons, ["compromised actor"]);
   });
 
-  it("omits reason from the body when not supplied", async () => {
+  it("omits reasons from the body when not supplied", async () => {
     forceRemoteMode();
     const { fn, captured } = captureFetch({ id: "permit_42", status: "revoked" });
     globalThis.fetch = fn;
     const { client } = await setup();
     await client.callTool({
       name: "atlasent_revoke_permit",
-      arguments: { permit_id: "permit_42", org_id: "org_1" },
+      arguments: { permitToken: "permit_42", org_id: "org_1" },
     });
     const body = captured[0].body as Record<string, unknown>;
-    assert.equal("reason" in body, false);
+    assert.equal("reasons" in body, false);
   });
 });
 

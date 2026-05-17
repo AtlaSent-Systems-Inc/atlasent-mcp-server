@@ -262,7 +262,7 @@ export function createServer(): McpServer {
       if (!rateLimitOk("evaluate")) {
         const decision = {
           decision: "deny" as const,
-          reason: "MCP tool rate limit exceeded — slow down and retry",
+          reasons: ["MCP tool rate limit exceeded — slow down and retry"],
         };
         log("evaluate.rate_limited", { decision });
         return toolResult(decision);
@@ -316,7 +316,7 @@ export function createServer(): McpServer {
         const result = {
           outcome: "error" as const,
           valid: false,
-          reason: "MCP tool rate limit exceeded — slow down and retry",
+          reasons: ["MCP tool rate limit exceeded — slow down and retry"],
         };
         log("verify_permit.rate_limited", { result });
         return toolResult(result);
@@ -377,7 +377,7 @@ export function createServer(): McpServer {
       if (!rateLimitOk("deploy_service")) {
         const decision = {
           decision: "deny" as const,
-          reason: "MCP tool rate limit exceeded — slow down and retry",
+          reasons: ["MCP tool rate limit exceeded — slow down and retry"],
         };
         log("deploy_service.rate_limited", { decision });
         return toolResult(decision);
@@ -395,7 +395,7 @@ export function createServer(): McpServer {
       log("deploy_service.authorize", { service: args.service_name, ctx, decision });
 
       if (decision.decision !== "allow") {
-        log("deploy_service.blocked", { service: args.service_name, reason: (decision as { reason?: string }).reason });
+        log("deploy_service.blocked", { service: args.service_name, reasons: (decision as { reasons?: string[] }).reasons });
         return toolResult(decision);
       }
       // --------------------------------------------------------------------
@@ -422,7 +422,7 @@ export function createServer(): McpServer {
       title: "AtlaSent — Evaluate (Remote API)",
       description:
         "Evaluate an action against your published AtlaSent policies. " +
-        "Returns allow/deny/hold/escalate with a permit_token on allow. " +
+        "Returns allow/deny/hold/escalate with a permitToken on allow. " +
         "Use this when ATLASENT_MODE=remote and you need to gate an action " +
         "against your hosted policy engine.",
       inputSchema: z.object({
@@ -460,10 +460,10 @@ export function createServer(): McpServer {
     },
     async (args) => {
       if (isToolDisabledByReadOnly("atlasent_evaluate")) {
-        return toolResult({ decision: "deny", reason: "Tool disabled: ATLASENT_MCP_READONLY=1" });
+        return toolResult({ decision: "deny", reasons: ["Tool disabled: ATLASENT_MCP_READONLY=1"] });
       }
       if (!rateLimitOk("atlasent_evaluate")) {
-        return toolResult({ decision: "deny", reason: "MCP tool rate limit exceeded — slow down and retry" });
+        return toolResult({ decision: "deny", reasons: ["MCP tool rate limit exceeded — slow down and retry"] });
       }
       try {
         const result = await evaluateAction({
@@ -510,7 +510,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       if (!rateLimitOk("atlasent_list_policies")) {
-        return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
       }
       try {
         const result = await listPolicies({ org_id: args.org_id, status: args.status });
@@ -550,7 +550,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       if (!rateLimitOk("atlasent_get_policy")) {
-        return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
       }
       try {
         const result = await getPolicy({ policy_id: args.policy_id, org_id: args.org_id });
@@ -607,7 +607,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       if (!rateLimitOk("atlasent_list_audit_events")) {
-        return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
       }
       try {
         const result = await listAuditEvents({
@@ -702,7 +702,7 @@ export function createServer(): McpServer {
       },
       async (args) => {
         if (!rateLimitOk("atlasent_create_policy")) {
-          return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+          return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
         }
         try {
           const result = await createPolicy({
@@ -806,7 +806,7 @@ export function createServer(): McpServer {
       },
       async (args) => {
         if (!rateLimitOk("atlasent_update_policy")) {
-          return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+          return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
         }
         try {
           const result = await updatePolicy({
@@ -861,7 +861,7 @@ export function createServer(): McpServer {
       },
       async (args) => {
         if (!rateLimitOk("atlasent_delete_policy")) {
-          return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+          return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
         }
         try {
           const result = await deletePolicy({ policy_id: args.policy_id, org_id: args.org_id });
@@ -885,21 +885,20 @@ export function createServer(): McpServer {
           "Revoke a permit before it expires. The permit immediately becomes " +
           "invalid for verify_permit calls.",
         inputSchema: z.object({
-          permit_id: z
+          permitToken: z
             .string()
             .min(1)
             .max(MAX_FIELD_LEN)
-            .describe("The permit ID to revoke."),
+            .describe("The permit token to revoke."),
           org_id: z
             .string()
             .min(1)
             .max(MAX_FIELD_LEN)
             .describe("Organization ID that owns the permit."),
-          reason: z
-            .string()
-            .max(MAX_FIELD_LEN)
+          reasons: z
+            .array(z.string().max(MAX_FIELD_LEN))
             .optional()
-            .describe("Human-readable reason for revocation."),
+            .describe("Human-readable reasons for revocation."),
         }),
         annotations: {
           title: "AtlaSent — Revoke Permit",
@@ -910,13 +909,13 @@ export function createServer(): McpServer {
       },
       async (args) => {
         if (!rateLimitOk("atlasent_revoke_permit")) {
-          return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+          return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
         }
         try {
           const result = await revokePermit({
-            permit_id: args.permit_id,
+            permitToken: args.permitToken,
             org_id: args.org_id,
-            reason: args.reason,
+            reasons: args.reasons,
           });
           return toolResult(result);
         } catch (e) {
@@ -986,7 +985,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       if (!rateLimitOk("atlasent_list_permits")) {
-        return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
       }
       try {
         const result = await listPermits({
@@ -1059,7 +1058,7 @@ export function createServer(): McpServer {
       },
       async (args) => {
         if (!rateLimitOk("atlasent_permit")) {
-          return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+          return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
         }
         try {
           const result = await issuePermit({
@@ -1121,7 +1120,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       if (!rateLimitOk("atlasent_verify_permit")) {
-        return toolResult({ valid: false, outcome: "error", reason: "MCP tool rate limit exceeded" });
+        return toolResult({ valid: false, outcome: "error", reasons: ["MCP tool rate limit exceeded"] });
       }
       try {
         const result = await verifyPermitV1({
@@ -1188,7 +1187,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       if (!rateLimitOk("atlasent_create_approval_request")) {
-        return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
       }
       try {
         const result = await createApprovalRequest({
@@ -1250,7 +1249,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       if (!rateLimitOk("atlasent_resolve_approval_request")) {
-        return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
       }
       try {
         const result = await resolveApprovalRequest({
@@ -1310,7 +1309,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       if (!rateLimitOk("atlasent_record_execution_evaluation")) {
-        return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
       }
       try {
         const result = await recordExecutionEvaluation({
@@ -1370,7 +1369,7 @@ export function createServer(): McpServer {
       },
       async (args) => {
         if (!rateLimitOk("atlasent_create_webhook")) {
-          return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+          return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
         }
         try {
           const result = await createWebhook({
@@ -1418,7 +1417,7 @@ export function createServer(): McpServer {
       },
       async (args) => {
         if (!rateLimitOk("atlasent_delete_webhook")) {
-          return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
+          return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
         }
         try {
           const result = await deleteWebhook({ webhook_id: args.webhook_id, org_id: args.org_id });
