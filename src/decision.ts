@@ -22,13 +22,13 @@ export type AllowDecision = {
 
 export type DenyDecision = {
   decision: "deny";
-  reason: string;
+  reasons: string[];
   audit_id?: string;
 };
 
 export type HoldDecision = {
   decision: "hold";
-  reason: string;
+  reasons: string[];
   hold_id?: string;
   audit_id?: string;
 };
@@ -39,7 +39,7 @@ export type Decision = AllowDecision | DenyDecision | HoldDecision;
 export type VerifyResult = {
   outcome: "verified" | "expired" | "invalid" | "error";
   valid: boolean;
-  reason?: string;
+  reasons?: string[];
   verify_error_code?: string;
   audit_id?: string;
 };
@@ -54,7 +54,7 @@ export type VerifyResult = {
  *      when `valid !== true`.
  *   3. Generic REST envelopes from the hosted-API tools — `listPolicies`,
  *      `getPolicy`, `createPolicy`, etc. return `unknown` (the API response
- *      shape), and rate-limit short-circuits return `{ error, reason }`.
+ *      shape), and rate-limit short-circuits return `{ error, reasons }`.
  *      `isError` is set when an `error` field is present; otherwise the
  *      response is treated as success.
  *
@@ -100,6 +100,6 @@ function computeIsError(payload: Record<string, unknown>): boolean {
   return false;
 }
 
-export function denyDecision(reason: string, audit_id?: string): DenyDecision {
-  return audit_id ? { decision: "deny", reason, audit_id } : { decision: "deny", reason };
+export function denyDecision(reasons: string[], audit_id?: string): DenyDecision {
+  return audit_id ? { decision: "deny", reasons, audit_id } : { decision: "deny", reasons };
 }

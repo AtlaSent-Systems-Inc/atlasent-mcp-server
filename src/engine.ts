@@ -43,7 +43,7 @@ export async function authorize(ctx: ActionContext): Promise<Decision> {
   try {
     return getMode() === "remote" ? await authorizeRemote(ctx) : authorizeLocal(ctx);
   } catch (err) {
-    return denyDecision(err instanceof Error ? err.message : String(err));
+    return denyDecision([err instanceof Error ? err.message : String(err)]);
   }
 }
 
@@ -54,7 +54,7 @@ export async function verify(token: string, ctx: ActionContext): Promise<VerifyR
     return {
       outcome: "error",
       valid: false,
-      reason: err instanceof Error ? err.message : String(err),
+      reasons: [err instanceof Error ? err.message : String(err)],
     };
   }
 }
@@ -147,13 +147,13 @@ async function get<T>(path: string, params?: Record<string, string | undefined>)
 // Canonical evaluate response shape (v1-evaluate/handler.ts):
 //   { decision: "allow"|"deny"|"hold"|"escalate",
 //     permit_token?: string, request_id?: string, expires_at?: string,
-//     denial?: { reason: string, code: string } }
+//     denial?: { reasons: string[], code: string } }
 interface RawEvaluate {
   decision: string;
   permit_token?: string;
-  reason?: string;
+  reasons?: string[];
   request_id?: string;
-  denial?: { reason?: string; code?: string };
+  denial?: { reasons?: string[]; code?: string };
   conditions?: string[];
   hold_id?: string;
 }
@@ -183,32 +183,32 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   }
 
   if (data.decision === "hold" || data.decision === "escalate") {
-    const reason = data.denial?.reason ?? data.reason ?? "Held for human review";
+    const reasons = data.denial?.reasons ?? data.reasons ?? ["Held for human review"];
     return {
       decision: "hold",
-      reason,
+      reasons,
       ...(data.hold_id && { hold_id: data.hold_id }),
       ...(audit_id && { audit_id }),
     };
   }
 
   // Anything else (including "deny" or an unknown decision) is fail-closed.
-  const reason = data.denial?.reason ?? data.reason ?? `Denied (decision=${data.decision})`;
+  const reasons = data.denial?.reasons ?? data.reasons ?? [`Denied (decision=${data.decision})`];
   return {
     decision: "deny",
-    reason,
+    reasons,
     ...(audit_id && { audit_id }),
   };
 }
 
 // Canonical verify-permit response shape (v1-verify-permit/handler.ts):
 //   { valid: boolean, outcome: "allow"|"deny",
-//     verify_error_code?: string, reason?: string }
+//     verify_error_code?: string, reasons?: string[] }
 interface RawVerify {
   valid: boolean;
   outcome: "allow" | "deny";
   verify_error_code?: string;
-  reason?: string;
+  reasons?: string[];
 }
 
 async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyResult> {
@@ -243,7 +243,7 @@ async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyRe
   return {
     outcome,
     valid: data.valid === true,
-    ...(data.reason && { reason: data.reason }),
+    ...(data.reasons?.length && { reasons: data.reasons }),
     ...(data.verify_error_code && { verify_error_code: data.verify_error_code }),
   };
 }
@@ -264,9 +264,10 @@ export interface EvaluateParams {
 
 export interface EvaluateResponse {
   decision: string;
-  permit_token?: string;
-  evaluation_id?: string;
-  reason?: string;
+  evaluationId?: string;
+  permit?: string;
+  permitToken?: string;
+  reasons?: string[];
   [key: string]: unknown;
 }
 
@@ -363,15 +364,15 @@ export async function updatePolicy(params: UpdatePolicyParams): Promise<unknown>
 }
 
 export interface RevokePermitParams {
-  permit_id: string;
+  permitToken: string;
   org_id: string;
-  reason?: string;
+  reasons?: string[];
 }
 
 export async function revokePermit(params: RevokePermitParams): Promise<unknown> {
-  return post(`/v1/permits/${encodeURIComponent(params.permit_id)}/revoke`, {
+  return post(`/v1/permits/${encodeURIComponent(params.permitToken)}/revoke`, {
     org_id: params.org_id,
-    ...(params.reason !== undefined ? { reason: params.reason } : {}),
+    ...(params.reasons !== undefined ? { reasons: params.reasons } : {}),
   });
 }
 

@@ -62,7 +62,9 @@ export function authorizeLocal(ctx: ActionContext): Decision {
   if (isProd && !hasApproval) {
     return {
       decision: "deny",
-      reason: `Production action '${ctx.action_type}' requires at least one approval. Add an approval to the 'approvals' list and retry.`,
+      reasons: [
+        `Production action '${ctx.action_type}' requires at least one approval. Add an approval to the 'approvals' list and retry.`,
+      ],
       audit_id,
     };
   }
@@ -70,7 +72,9 @@ export function authorizeLocal(ctx: ActionContext): Decision {
   if (isDestructive(ctx.action_type) && !hasWindow) {
     return {
       decision: "hold",
-      reason: `Destructive action '${ctx.action_type}' requires a scheduled change_window. Awaiting human review.`,
+      reasons: [
+        `Destructive action '${ctx.action_type}' requires a scheduled change_window. Awaiting human review.`,
+      ],
       hold_id: shortId("hold_local"),
       audit_id,
     };
@@ -94,24 +98,24 @@ export function verifyLocal(token: string, _ctx: ActionContext): VerifyResult {
   const audit_id = shortId("aud_local");
 
   if (!token.startsWith("pt_local_")) {
-    return { outcome: "invalid", valid: false, reason: "Token is not a local-mode permit", audit_id };
+    return { outcome: "invalid", valid: false, reasons: ["Token is not a local-mode permit"], audit_id };
   }
 
   const parts = token.split("_");
   if (parts.length < 4) {
-    return { outcome: "invalid", valid: false, reason: "Malformed local permit token", audit_id };
+    return { outcome: "invalid", valid: false, reasons: ["Malformed local permit token"], audit_id };
   }
 
   const issuedAt = parseInt(parts[2], 36);
   if (Number.isNaN(issuedAt)) {
-    return { outcome: "invalid", valid: false, reason: "Unparseable timestamp in local permit", audit_id };
+    return { outcome: "invalid", valid: false, reasons: ["Unparseable timestamp in local permit"], audit_id };
   }
 
   if (Date.now() - issuedAt > PERMIT_TTL_MS) {
     return {
       outcome: "expired",
       valid: false,
-      reason: `Local permit expired (TTL ${PERMIT_TTL_MS / 1000}s)`,
+      reasons: [`Local permit expired (TTL ${PERMIT_TTL_MS / 1000}s)`],
       audit_id,
     };
   }
@@ -120,7 +124,7 @@ export function verifyLocal(token: string, _ctx: ActionContext): VerifyResult {
     return {
       outcome: "invalid",
       valid: false,
-      reason: "Local permit already used",
+      reasons: ["Local permit already used"],
       audit_id,
     };
   }
