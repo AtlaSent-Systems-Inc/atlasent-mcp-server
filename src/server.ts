@@ -211,6 +211,12 @@ export function isToolDisabledByReadOnly(toolName: string): boolean {
   return READONLY_DISABLED_TOOLS.has(toolName);
 }
 
+function toolError(e: unknown) {
+  return toolResult({
+    error: e instanceof Error ? e.message : String(e),
+  });
+}
+
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "@atlasent/mcp-server",
@@ -440,7 +446,7 @@ export function createServer(): McpServer {
           .max(MAX_FIELD_LEN)
           .describe("Organization ID that owns the policy."),
         context: z
-          .record(z.unknown())
+          .record(z.string(), z.unknown())
           .optional()
           .describe("Key-value context matched against constraint rules."),
       }),
@@ -458,15 +464,19 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_evaluate")) {
         return toolResult({ decision: "deny", reason: "MCP tool rate limit exceeded — slow down and retry" });
       }
-      const result = await evaluateAction({
-        subject: args.subject,
-        action: args.action,
-        resource: args.resource,
-        org_id: args.org_id,
-        context: args.context,
-      });
-      log("atlasent_evaluate", { result });
-      return toolResult(result);
+      try {
+        const result = await evaluateAction({
+          subject: args.subject,
+          action: args.action,
+          resource: args.resource,
+          org_id: args.org_id,
+          context: args.context,
+        });
+        log("atlasent_evaluate", { result });
+        return toolResult(result);
+      } catch (e) {
+        return toolError(e);
+      }
     },
   );
 
@@ -501,8 +511,12 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_list_policies")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await listPolicies({ org_id: args.org_id, status: args.status });
-      return toolResult(result);
+      try {
+        const result = await listPolicies({ org_id: args.org_id, status: args.status });
+        return toolResult(result);
+      } catch (e) {
+        return toolError(e);
+      }
     },
   );
 
@@ -537,8 +551,12 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_get_policy")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await getPolicy({ policy_id: args.policy_id, org_id: args.org_id });
-      return toolResult(result);
+      try {
+        const result = await getPolicy({ policy_id: args.policy_id, org_id: args.org_id });
+        return toolResult(result);
+      } catch (e) {
+        return toolError(e);
+      }
     },
   );
 
@@ -590,14 +608,18 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_list_audit_events")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await listAuditEvents({
-        org_id: args.org_id,
-        evaluation_id: args.evaluation_id,
-        from: args.from,
-        to: args.to,
-        limit: args.limit,
-      });
-      return toolResult(result);
+      try {
+        const result = await listAuditEvents({
+          org_id: args.org_id,
+          evaluation_id: args.evaluation_id,
+          from: args.from,
+          to: args.to,
+          limit: args.limit,
+        });
+        return toolResult(result);
+      } catch (e) {
+        return toolError(e);
+      }
     },
   );
 
@@ -634,7 +656,7 @@ export function createServer(): McpServer {
             .max(MAX_FIELD_LEN)
             .describe("Policy type (e.g. 'access_control', 'approval_gate')."),
           rules: z
-            .array(z.record(z.unknown()))
+            .array(z.record(z.string(), z.unknown()))
             .describe("Ordered list of rules — first match wins."),
           description: z
             .string()
@@ -652,11 +674,11 @@ export function createServer(): McpServer {
             .optional()
             .describe("Evaluation priority (lower number = higher priority)."),
           applies_to: z
-            .record(z.unknown())
+            .record(z.string(), z.unknown())
             .optional()
             .describe("Scope selector controlling which requests this policy applies to."),
           actions: z
-            .record(z.unknown())
+            .record(z.string(), z.unknown())
             .optional()
             .describe("Action-specific configuration."),
           effective_at: z
@@ -681,21 +703,25 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_create_policy")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await createPolicy({
-          org_id: args.org_id,
-          policy_id: args.policy_id,
-          title: args.title,
-          policy_type: args.policy_type,
-          rules: args.rules,
-          description: args.description,
-          version: args.version,
-          priority: args.priority,
-          applies_to: args.applies_to,
-          actions: args.actions,
-          effective_at: args.effective_at,
-          expires_at: args.expires_at,
-        });
-        return toolResult(result);
+        try {
+          const result = await createPolicy({
+            org_id: args.org_id,
+            policy_id: args.policy_id,
+            title: args.title,
+            policy_type: args.policy_type,
+            rules: args.rules,
+            description: args.description,
+            version: args.version,
+            priority: args.priority,
+            applies_to: args.applies_to,
+            actions: args.actions,
+            effective_at: args.effective_at,
+            expires_at: args.expires_at,
+          });
+          return toolResult(result);
+        } catch (e) {
+          return toolError(e);
+        }
       },
     );
   }
@@ -738,7 +764,7 @@ export function createServer(): McpServer {
             .optional()
             .describe("New evaluation priority (lower number = higher priority)."),
           rules: z
-            .array(z.record(z.unknown()))
+            .array(z.record(z.string(), z.unknown()))
             .optional()
             .describe("Replacement rules array (replaces all existing rules)."),
           description: z
@@ -752,11 +778,11 @@ export function createServer(): McpServer {
             .optional()
             .describe("New semantic version string."),
           applies_to: z
-            .record(z.unknown())
+            .record(z.string(), z.unknown())
             .optional()
             .describe("Updated scope selector."),
           actions: z
-            .record(z.unknown())
+            .record(z.string(), z.unknown())
             .optional()
             .describe("Updated action-specific configuration."),
           effective_at: z
@@ -781,21 +807,25 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_update_policy")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await updatePolicy({
-          policy_id: args.policy_id,
-          org_id: args.org_id,
-          title: args.title,
-          status: args.status,
-          priority: args.priority,
-          rules: args.rules,
-          description: args.description,
-          version: args.version,
-          applies_to: args.applies_to,
-          actions: args.actions,
-          effective_at: args.effective_at,
-          expires_at: args.expires_at,
-        });
-        return toolResult(result);
+        try {
+          const result = await updatePolicy({
+            policy_id: args.policy_id,
+            org_id: args.org_id,
+            title: args.title,
+            status: args.status,
+            priority: args.priority,
+            rules: args.rules,
+            description: args.description,
+            version: args.version,
+            applies_to: args.applies_to,
+            actions: args.actions,
+            effective_at: args.effective_at,
+            expires_at: args.expires_at,
+          });
+          return toolResult(result);
+        } catch (e) {
+          return toolError(e);
+        }
       },
     );
   }
@@ -832,8 +862,12 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_delete_policy")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await deletePolicy({ policy_id: args.policy_id, org_id: args.org_id });
-        return toolResult(result);
+        try {
+          const result = await deletePolicy({ policy_id: args.policy_id, org_id: args.org_id });
+          return toolResult(result);
+        } catch (e) {
+          return toolError(e);
+        }
       },
     );
   }
@@ -877,12 +911,16 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_revoke_permit")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await revokePermit({
-          permit_id: args.permit_id,
-          org_id: args.org_id,
-          reason: args.reason,
-        });
-        return toolResult(result);
+        try {
+          const result = await revokePermit({
+            permit_id: args.permit_id,
+            org_id: args.org_id,
+            reason: args.reason,
+          });
+          return toolResult(result);
+        } catch (e) {
+          return toolError(e);
+        }
       },
     );
   }
@@ -949,17 +987,21 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_list_permits")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await listPermits({
-        org_id: args.org_id,
-        limit: args.limit,
-        status: args.status,
-        actor_id: args.actor_id,
-        action_type: args.action_type,
-        from: args.from,
-        to: args.to,
-        cursor: args.cursor,
-      });
-      return toolResult(result);
+      try {
+        const result = await listPermits({
+          org_id: args.org_id,
+          limit: args.limit,
+          status: args.status,
+          actor_id: args.actor_id,
+          action_type: args.action_type,
+          from: args.from,
+          to: args.to,
+          cursor: args.cursor,
+        });
+        return toolResult(result);
+      } catch (e) {
+        return toolError(e);
+      }
     },
   );
 
@@ -1003,7 +1045,7 @@ export function createServer(): McpServer {
             .optional()
             .describe("How long the permit is valid in seconds (default 300, max 86400)."),
           context: z
-            .record(z.unknown())
+            .record(z.string(), z.unknown())
             .optional()
             .describe("Optional context to bind to the permit."),
         }),
@@ -1018,15 +1060,19 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_permit")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await issuePermit({
-          subject: args.subject,
-          action: args.action,
-          resource: args.resource,
-          org_id: args.org_id,
-          ttl_seconds: args.ttl_seconds,
-          context: args.context,
-        });
-        return toolResult(result);
+        try {
+          const result = await issuePermit({
+            subject: args.subject,
+            action: args.action,
+            resource: args.resource,
+            org_id: args.org_id,
+            ttl_seconds: args.ttl_seconds,
+            context: args.context,
+          });
+          return toolResult(result);
+        } catch (e) {
+          return toolError(e);
+        }
       },
     );
   }
@@ -1076,13 +1122,17 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_verify_permit")) {
         return toolResult({ valid: false, outcome: "error", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await verifyPermitV1({
-        permit_token: args.permit_token,
-        org_id: args.org_id,
-        action: args.action,
-        resource: args.resource,
-      });
-      return toolResult(result);
+      try {
+        const result = await verifyPermitV1({
+          permit_token: args.permit_token,
+          org_id: args.org_id,
+          action: args.action,
+          resource: args.resource,
+        });
+        return toolResult(result);
+      } catch (e) {
+        return toolError(e);
+      }
     },
   );
 
@@ -1124,7 +1174,7 @@ export function createServer(): McpServer {
           .optional()
           .describe("Human-readable justification for why the action is needed."),
         context: z
-          .record(z.unknown())
+          .record(z.string(), z.unknown())
           .optional()
           .describe("Context from the original evaluate call."),
       }),
@@ -1139,15 +1189,19 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_create_approval_request")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await createApprovalRequest({
-        subject: args.subject,
-        action: args.action,
-        resource: args.resource,
-        org_id: args.org_id,
-        justification: args.justification,
-        context: args.context,
-      });
-      return toolResult(result);
+      try {
+        const result = await createApprovalRequest({
+          subject: args.subject,
+          action: args.action,
+          resource: args.resource,
+          org_id: args.org_id,
+          justification: args.justification,
+          context: args.context,
+        });
+        return toolResult(result);
+      } catch (e) {
+        return toolError(e);
+      }
     },
   );
 
@@ -1197,14 +1251,18 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_resolve_approval_request")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await resolveApprovalRequest({
-        approval_request_id: args.approval_request_id,
-        org_id: args.org_id,
-        resolution: args.resolution,
-        resolver_id: args.resolver_id,
-        comment: args.comment,
-      });
-      return toolResult(result);
+      try {
+        const result = await resolveApprovalRequest({
+          approval_request_id: args.approval_request_id,
+          org_id: args.org_id,
+          resolution: args.resolution,
+          resolver_id: args.resolver_id,
+          comment: args.comment,
+        });
+        return toolResult(result);
+      } catch (e) {
+        return toolError(e);
+      }
     },
   );
 
@@ -1238,7 +1296,7 @@ export function createServer(): McpServer {
           .optional()
           .describe("ISO-8601 timestamp when the execution completed."),
         details: z
-          .record(z.unknown())
+          .record(z.string(), z.unknown())
           .optional()
           .describe("Optional details about what was executed and the result."),
       }),
@@ -1253,14 +1311,18 @@ export function createServer(): McpServer {
       if (!rateLimitOk("atlasent_record_execution_evaluation")) {
         return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
       }
-      const result = await recordExecutionEvaluation({
-        evaluation_id: args.evaluation_id,
-        org_id: args.org_id,
-        outcome: args.outcome,
-        executed_at: args.executed_at,
-        details: args.details,
-      });
-      return toolResult(result);
+      try {
+        const result = await recordExecutionEvaluation({
+          evaluation_id: args.evaluation_id,
+          org_id: args.org_id,
+          outcome: args.outcome,
+          executed_at: args.executed_at,
+          details: args.details,
+        });
+        return toolResult(result);
+      } catch (e) {
+        return toolError(e);
+      }
     },
   );
 
@@ -1309,14 +1371,18 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_create_webhook")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await createWebhook({
-          org_id: args.org_id,
-          url: args.url,
-          events: args.events,
-          description: args.description,
-          secret: args.secret,
-        });
-        return toolResult(result);
+        try {
+          const result = await createWebhook({
+            org_id: args.org_id,
+            url: args.url,
+            events: args.events,
+            description: args.description,
+            secret: args.secret,
+          });
+          return toolResult(result);
+        } catch (e) {
+          return toolError(e);
+        }
       },
     );
   }
@@ -1353,8 +1419,12 @@ export function createServer(): McpServer {
         if (!rateLimitOk("atlasent_delete_webhook")) {
           return toolResult({ error: "rate_limit", reason: "MCP tool rate limit exceeded" });
         }
-        const result = await deleteWebhook({ webhook_id: args.webhook_id, org_id: args.org_id });
-        return toolResult(result);
+        try {
+          const result = await deleteWebhook({ webhook_id: args.webhook_id, org_id: args.org_id });
+          return toolResult(result);
+        } catch (e) {
+          return toolError(e);
+        }
       },
     );
   }
