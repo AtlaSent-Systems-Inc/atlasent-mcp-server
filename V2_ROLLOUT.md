@@ -1,5 +1,19 @@
 # atlasent-mcp-server — V2 Rollout
 
+> **Doctrine normalization header (2026-05-18).** This file is
+> preserved unchanged below per Doctrine 4 of
+> [`atlasent/VERSIONING_DOCTRINE.md`](https://github.com/AtlaSent-Systems-Inc/atlasent/blob/claude/normalize-roadmap-versioning-NWPuP/VERSIONING_DOCTRINE.md).
+> Under the current doctrine there is no "v2 product"; the work
+> described here splits across **Phase 1** (Streamable HTTP transport,
+> SDK 2.x adoption, batch/stream/GraphQL tool surfaces — additive on
+> the `AtlaSent v1` contract) and **Phase 2** (behavior-aware tool
+> gating, fail-closed audit). The filename, `B.MCP#` / `C.MCP#`
+> identifiers, and code-level flag names (`v2_mcp_streamable_http`,
+> `v2_batch`, `v2_streaming`, `v2_graphql`,
+> `v2_behavior_conditioning`) are retained per Doctrine 4. The npm
+> package SemVer `@atlasent/mcp-server@1.0.0` is the package release
+> (Doctrine 5), independent of the platform.
+
 > **Reframing normalization header (2026-05-18).** This document
 > remains in scope and is preserved unchanged per the "do not rewrite
 > history" doctrine ([`atlasent/VERSIONING_DOCTRINE.md`](https://github.com/AtlaSent-Systems-Inc/atlasent/blob/main/VERSIONING_DOCTRINE.md)
