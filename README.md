@@ -6,6 +6,24 @@ An MCP server that plugs into any [Model Context Protocol](https://modelcontextp
 
 Ships with a local rules engine so you can run the full evaluate → act → verify flow in under a minute, with zero credentials. The hosted AtlaSent backend is a configuration swap, not a rewrite.
 
+## The evaluate → permit → verify pattern
+
+Every protected tool call follows three steps:
+
+```
+1. evaluate   ——  atlasent_evaluate(action, subject, resource)
+                 → decision: allow | deny | hold | escalate
+                 → permit_token (only on allow)
+
+2. execute    ——  your action runs (only if decision === "allow")
+
+3. verify     ——  atlasent_verify_permit(permit_token)
+                 → closes the audit loop
+                 → marks permit consumed (single-use)
+```
+
+If `decision !== "allow"` at step 1, execution never reaches step 2. If the AtlaSent API is unreachable, step 1 fails closed — `deny` — and execution is blocked.
+
 ## Run the demo in 60 seconds
 
 ```bash
@@ -263,7 +281,7 @@ A protected tool that authorizes itself before executing. Every call:
 3. If the decision is anything other than `allow`, returns the decision and does NOT execute
 4. On `allow`, runs the deploy and returns the result plus the permit token
 
-See `src/server.ts` (the `deploy_service` handler) for the exact 20-line pattern every protected tool should follow. In production, your domain tools live on other MCP servers and call AtlaSent's `evaluate` tool before executing; this demo co-locates them so you can see the full flow today.
+See `src/server.ts` (the `deploy_service` handler) for the exact 20-line pattern every protected tool should follow.
 
 ## Execution Flow
 
@@ -276,7 +294,7 @@ See `src/server.ts` (the `deploy_service` handler) for the exact 20-line pattern
   ┌───────────────────────┐
   │    Protected tool       │
   │  (e.g. deploy_service)  │
-  └─────┬───────────────────┘
+  └─────┬─────────────────┘
         │ (1) build ActionContext
         ▼
   ┌─────────────────┐       ┌──────────────────────────┐
@@ -299,11 +317,11 @@ See `src/server.ts` (the `deploy_service` handler) for the exact 20-line pattern
                       later: verify_permit closes the audit loop
 ```
 
-The **interception point** is step (2): `authorize()` runs before the action. That's the entire guarantee — if `decision !== "allow"`, the action does not run.
+The **interception point** is step (2): `authorize()` runs before the action. If `decision !== "allow"`, the action does not run.
 
 ## Decision envelope
 
-Every authorization result uses the same shape, so agents and hosts handle all outcomes uniformly:
+Every authorization result uses the same shape:
 
 ```ts
 type Decision =
@@ -326,18 +344,18 @@ type VerifyResult = {
 **Handling each case:**
 
 | Decision | Agent behavior |
-|---|---|
+|----------|-----------------|
 | `allow` | Proceed. Pass `permit_token` to `verify_permit` after completing the action. |
 | `deny` | Do not proceed. Surface `reason` to the user. |
 | `hold` | Do not proceed. Tell the user the action is queued for human review; reference `hold_id`. |
-| **verification failure** (verify returns `valid: false` or `outcome: "error"`) | Flag the action for review. Something happened outside policy. |
+| **verification failure** (`valid: false` or `outcome: "error"`) | Flag the action for review. |
 
 ## Local vs Remote mode
 
 The engine behind `authorize()` is pluggable. The same tool handlers work in both modes — swapping the backend is a configuration change.
 
 | Mode | When selected | What it does |
-|---|---|---|
+|------|---------------|--------------|
 | `local` | `ATLASENT_MODE=local`, or both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are unset | Runs a small in-process rules engine (`src/localEngine.ts`) — no network, no credentials |
 | `remote` | `ATLASENT_MODE=remote`, or both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are set | Calls the hosted AtlaSent backend at `POST /v1-evaluate` and `POST /v1-verify-permit` |
 
@@ -350,19 +368,17 @@ The engine behind `authorize()` is pluggable. The same tool handlers work in bot
 **Environment variables:**
 
 | Variable | Required | Default | Purpose |
-|---|---|---|---|
+|----------|----------|---------|----------|
 | `ATLASENT_MODE` | no | auto-detect | Force `local` or `remote` |
-| `ATLASENT_API_KEY` | remote only | — | Bearer token for the hosted API (prefix: `ask_live_` / `ask_test_`) |
+| `ATLASENT_API_KEY` | remote only | — | Bearer token for the hosted API |
 | `ATLASENT_BASE_URL` | remote only | `https://api.atlasent.com` | Hosted API base URL |
 | `ATLASENT_ANON_KEY` | no | — | Optional `x-anon-key` header |
 | `ATLASENT_MCP_RATE_LIMIT` | no | `600` | Per-tool calls per minute (token bucket) |
-| `ATLASENT_MCP_READONLY` | no | (unset) | If `1` or `true`, skip registration of the 7 mutating tools. **Recommended for live-API demos.** See [Read-only mode](#read-only-mode-for-live-demos). |
+| `ATLASENT_MCP_READONLY` | no | (unset) | If `1` or `true`, skip registration of the 7 mutating tools. **Recommended for live-API demos.** |
 
 ## Read-only mode (for live demos)
 
-In `local` mode, every tool either calls the in-process rules engine or short-circuits with no side effects, so it doesn't matter what the agent tries to do. The story is different the moment you point the server at a live AtlaSent backend with `ATLASENT_MODE=remote` and a real API key: the mutating CRUD tools call the hosted API **directly**. They do not go through the `authorize()` interception. An adversarial prompt, a hallucinated "let me clean up" step, or a tool-misuse mistake by the agent can damage real demo-org state.
-
-Set `ATLASENT_MCP_READONLY=1` (or `true`) and the server will skip registration of these 7 tools at startup:
+Set `ATLASENT_MCP_READONLY=1` and the server skips registration of these 7 mutating tools at startup:
 
 - `atlasent_create_policy`
 - `atlasent_update_policy`
@@ -372,15 +388,11 @@ Set `ATLASENT_MCP_READONLY=1` (or `true`) and the server will skip registration 
 - `atlasent_revoke_permit`
 - `atlasent_permit`
 
-Everything else stays available, including the full demo flow:
+Everything else stays available, including the full demo flow (evaluate → act → verify), all read tools, and the approval-request workflow.
 
-- The agent-gating loop (`evaluate` → `verify_permit`) and the protected-tool demo (`deploy_service`)
-- All read tools (`atlasent_list_policies`, `atlasent_get_policy`, `atlasent_list_permits`, `atlasent_list_audit_events`, `atlasent_evaluate`, `atlasent_verify_permit`)
-- The approval-request workflow (`atlasent_create_approval_request`, `atlasent_resolve_approval_request`, `atlasent_record_execution_evaluation`)
+On startup, the server emits a `server.readonly_mode` structured log line to stderr listing the disabled tools.
 
-On startup, the server emits a `server.readonly_mode` structured log line to stderr listing the disabled tools so the operator can confirm the gate is active.
-
-**When to enable:** any live demo (customer call, conference, screencast) that uses a real API key — even on a dedicated demo org. The cost is zero (the read flow, the approval flow, and the `deploy_service` proof all stay functional); the upside is that no LLM mishap can destroy live state. Disable the flag only when you are intentionally exercising the mutating tools from a trusted operator console.
+**When to enable:** any live demo (customer call, conference, screencast) that uses a real API key — even on a dedicated demo org. Disable only when intentionally exercising the mutating tools from a trusted operator console.
 
 ## Claude Desktop config
 
@@ -402,8 +414,6 @@ On startup, the server emits a `server.readonly_mode` structured log line to std
 ```
 
 Location: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
-
-Remove `ATLASENT_MCP_READONLY` from `env` only when you intend to use the mutating CRUD tools from a trusted operator session.
 
 ## Cursor config
 
@@ -432,16 +442,12 @@ The agent never proceeds without an explicit `allow`.
 
 ## How the hosted backend plugs in
 
-Nothing in the tool handlers changes when you move from local to remote. The `deploy_service` handler calls `authorize(ctx)`; `authorize()` reads `ATLASENT_MODE` on every call and picks the engine. Switching to the hosted backend is three env vars.
+The remote adapter (`src/engine.ts`) speaks the AtlaSent API edge-function shape directly:
 
-The remote adapter (`src/engine.ts`) speaks the AtlaSent API edge-function shape directly. Both endpoints are served by `atlasent-api/supabase/functions/v1-{evaluate,verify-permit}/handler.ts`.
+- `POST /v1-evaluate` — request: `{ action_type, actor_id, context }`. Response: `{ decision, permit_token?, request_id, expires_at?, denial?, ... }`
+- `POST /v1-verify-permit` — request: `{ permit_token, action_type, actor_id }`. Response: `{ valid, outcome, verify_error_code?, reason? }`
 
-- `POST /v1-evaluate`
-  - request: `{ action_type, actor_id, context }` — flat top-level fields. mcp-server passes `environment`, `approvals`, and `change_window` inside `context` so policy expressions can read them.
-  - response: `{ decision, permit_token?, request_id, expires_at?, denial?, ... }` — top-level `permit_token` (raw UUID) is exposed to MCP hosts as the MCP envelope's `permit_token`; `request_id` becomes `audit_id`.
-- `POST /v1-verify-permit`
-  - request: `{ permit_token, action_type, actor_id }`
-  - response: `{ valid, outcome: "allow" | "deny", verify_error_code?, reason? }` — server `outcome === "allow"` becomes `verified`; `verify_error_code` is mapped to `expired` / `invalid` / `error` and falls through to `invalid` for anything unrecognized.
+Both endpoints are served by `atlasent-api`.
 
 ## Development
 
