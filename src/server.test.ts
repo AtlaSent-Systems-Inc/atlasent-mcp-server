@@ -214,6 +214,50 @@ describe("evaluate (remote mode)", () => {
     assert.equal(data.audit_id, "req_1");
   });
 
+  it("surfaces envelope_hash on allow when the API returns one", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      decision: "allow",
+      permit_token: "pt_envelope_1",
+      request_id: "req_env_1",
+      envelope_hash: "sha256:a1b2c3d4e5f6",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    assert.equal(data.envelope_hash, "sha256:a1b2c3d4e5f6");
+  });
+
+  it("surfaces envelope_hash on hold when the API returns one", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      decision: "escalate",
+      denial: { reasons: ["needs witness"], code: "REQUIRES_WITNESS" },
+      request_id: "req_env_hold",
+      envelope_hash: "sha256:deadbeef",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "hold");
+    assert.equal(data.envelope_hash, "sha256:deadbeef");
+  });
+
+  it("omits envelope_hash when the API does not return one", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      decision: "allow",
+      permit_token: "pt_no_env",
+      request_id: "req_no_env",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow");
+    assert.equal(data.envelope_hash, undefined);
+  });
+
   it("normalizes escalate to hold", async () => {
     forceRemoteMode();
     globalThis.fetch = mockFetch({

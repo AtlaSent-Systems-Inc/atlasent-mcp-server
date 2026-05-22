@@ -17,6 +17,7 @@ export type AllowDecision = {
   decision: "allow";
   permit_token: string;
   audit_id?: string;
+  envelope_hash?: string;
   conditions?: string[];
 };
 
@@ -24,6 +25,7 @@ export type DenyDecision = {
   decision: "deny";
   reasons: string[];
   audit_id?: string;
+  envelope_hash?: string;
 };
 
 export type HoldDecision = {
@@ -31,6 +33,7 @@ export type HoldDecision = {
   reasons: string[];
   hold_id?: string;
   audit_id?: string;
+  envelope_hash?: string;
 };
 
 export type Decision = AllowDecision | DenyDecision | HoldDecision;
