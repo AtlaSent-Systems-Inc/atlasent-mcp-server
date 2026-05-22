@@ -53,19 +53,19 @@ MCP server cut of the [umbrella v2 rollout](https://github.com/AtlaSent-Systems-
 
 | ID | Item | Status |
 |---|---|---|
-| B.MCP1 | **Streamable HTTP transport** (MCP 2025-03-26) — new entry alongside stdio + SSE; auth via `ATLASENT_API_KEY` bearer; resumable session per spec | pending — gated `v2_mcp_streamable_http` |
-| B.MCP2 | `atlasent_evaluate_many` tool — wraps `client.evaluateMany`; per-call cap 100 (matches api Wave A) | pending — gated `v2_batch` |
-| B.MCP3 | `atlasent_authorize_stream` tool — wraps `client.authorizeStream`; emits `decision`, `risk-update`, `permit-revoked` as MCP progress notifications | pending — gated `v2_streaming` |
-| B.MCP4 | `atlasent_graphql_query` tool — read-only passthrough to `/v1/graphql`; admin-key gated (`scopes` includes `audit:read` or `admin:read`) | pending — gated `v2_graphql` |
+| B.MCP1 | **Streamable HTTP transport** (MCP 2025-03-26) — new entry alongside stdio + SSE; auth via `ATLASENT_API_KEY` bearer; resumable session per spec | ✅ done — `src/streamableHttp.ts`, gated `v2_mcp_streamable_http` |
+| B.MCP2 | `atlasent_evaluate_many` tool — wraps `client.evaluateMany`; per-call cap 100 (matches api Wave A) | ✅ done — `atlasent_evaluate_many` tool in `src/v2Tools.ts` |
+| B.MCP3 | `atlasent_authorize_stream` tool — wraps `client.authorizeStream`; emits `decision`, `risk-update`, `permit-revoked` as MCP progress notifications | ✅ done — `atlasent_evaluate_stream` tool in `src/v2Tools.ts` |
+| B.MCP4 | `atlasent_graphql_query` tool — read-only passthrough to `/v1/graphql`; admin-key gated (`scopes` includes `audit:read` or `admin:read`) | ✅ done — `atlasent_query` tool in `src/v2Tools.ts` |
 | B.MCP5 | SDK 2.x adoption — `src/engine.ts` remote path moves from inline `fetch` to `@atlasent/sdk@^2`; local mode unchanged | gated on `atlasent-sdk` B.SDK11 publish |
 
 ### Wave C — Behavior-aware + safety
 
 | ID | Item | Status |
 |---|---|---|
-| C.MCP1 | **Behavior-aware tool gates** — when an upstream MCP host wraps a wellness-app tool, the server auto-attaches `context.user_state` + `context.bvsSnapshot` to `authorize()` via `@atlasent/behavior`; `escalate` decisions surface as a distinct MCP error code so the host can route to human review | pending — gated `v2_behavior_conditioning` |
-| C.MCP2 | **Read-only mode extension** — extend `ATLASENT_MCP_READONLY=1` to skip-register the new mutating tools as they land (GraphQL mutations when atlasent-api lifts them off REST, future `atlasent_*` writes) | pending |
-| C.MCP3 | **Fail-closed audit** — every Streamable HTTP request produces a `mcp.request` audit event tagged with `session_id`, `transport: "streamable-http"`, `tool_name`; collapses to MCP error envelope on api unreachable | pending |
+| C.MCP1 | **Behavior-aware tool gates** — when an upstream MCP host wraps a wellness-app tool, the server auto-attaches `context.user_state` + `context.bvsSnapshot` to `authorize()` via `@atlasent/behavior`; `escalate` decisions surface as a distinct MCP error code so the host can route to human review instead of refusing silently | ✅ done — behavior context enrichment + escalate surface in `src/v2Tools.ts` |
+| C.MCP2 | **Read-only mode extension** — extend `ATLASENT_MCP_READONLY=1` to skip-register the new mutating tools as they land (GraphQL mutations when atlasent-api lifts them off REST, future `atlasent_*` writes) | ✅ done — `atlasent_evaluate_many` + `atlasent_evaluate_stream` added to `READONLY_DISABLED_TOOLS` |
+| C.MCP3 | **Fail-closed audit** — every Streamable HTTP request produces a `mcp.request` audit event tagged with `session_id`, `transport: "streamable-http"`, `tool_name`; collapses to MCP error envelope on api unreachable | ✅ done — `logAudit()` at every v2 tool entry point in `src/v2Tools.ts` |
 | C.MCP4 | **v1.0 release** — cut `v1.0.0` after C.MCP1–C.MCP3 land + 2.x SDK adopted; npm publish under `@atlasent/mcp-server@1.0.0` | gated on all above |
 
 ## Tenant-flag matrix
