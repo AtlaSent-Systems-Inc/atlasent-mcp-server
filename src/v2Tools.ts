@@ -11,16 +11,14 @@
  * tool maps it to a typed MCP error result so the agent can decide whether
  * to fall back. There is no silent fallback at the MCP layer.
  *
- * --- Behavior-aware gates (deferred) ---------------------------------------
- * TODO(v2-wave-b/c): Behavior Conditioning Layer hook goes here. When
- * `@atlasent/behavior` (atlasent-sdk B.SDK9) lands and the
- * `v2_behavior_conditioning` flag is on, this registry should:
- *   1. read context.user_id from each item, fetch the redacted StateEvent
- *      summary, and attach `context.user_state` + `context.bvsSnapshot`;
- *   2. route a returned `decision: "escalate"` to a distinct MCP error
- *      class so the host can surface it to a human reviewer.
- * Tracked in V2_ROLLOUT.md as C.MCP1; out of scope for this PR because the
- * upstream package is not yet built.
+ * Behavior-aware gates (C.MCP1): when ATLASENT_BEHAVIOR_BASE_URL is set
+ * and v2_behavior_conditioning is active, user state is attached to each
+ * item's context before forwarding. escalate decisions surface as a
+ * distinct { error: "escalate" } result. Behavior fetch errors are
+ * fail-open (the request proceeds without behavior context).
+ *
+ * Fail-closed audit (C.MCP3): every tool call emits a mcp.request audit
+ * event to stderr before execution.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -65,6 +63,103 @@ function toolError(e: unknown) {
   });
 }
 
+// C.MCP3: fail-closed audit — every tool call emits mcp.request to stderr.
+function logAudit(toolName: string, extra?: Record<string, unknown>): void {
+  const entry = {
+    ts: new Date().toISOString(),
+    event: "mcp.request",
+    transport: "mcp-tool",
+    tool_name: toolName,
+    ...extra,
+  };
+  process.stderr.write(JSON.stringify(entry) + "\n");
+}
+
+// C.MCP1: behavior client — reads redacted StateSummary from behavior-insights.
+// Fail-open: returns {} on any error.
+interface StateSummary {
+  event_count: number;
+  window_start: string;
+  window_end: string;
+  category_counts: Record<string, number>;
+}
+
+async function fetchBehaviorContext(userId: string): Promise<Record<string, unknown>> {
+  const baseUrl = process.env.ATLASENT_BEHAVIOR_BASE_URL;
+  const apiKey = process.env.ATLASENT_BEHAVIOR_API_KEY;
+  if (!baseUrl || !apiKey) return {};
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5_000);
+    const res = await fetch(
+      `${baseUrl.replace(/\/$/, "")}/api/patterns/summary/${encodeURIComponent(userId)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+      },
+    );
+    clearTimeout(timer);
+    if (!res.ok) return {};
+    const summary = (await res.json()) as StateSummary | null;
+    if (!summary) return {};
+    return {
+      user_state: {
+        event_count: summary.event_count,
+        window_start: summary.window_start,
+        window_end: summary.window_end,
+        confidence_low: Object.keys(summary.category_counts ?? {}).length === 0,
+      },
+    };
+  } catch {
+    return {};
+  }
+}
+
+// C.MCP1: enrich batch items with behavior context when user_id is present.
+async function enrichItemsWithBehavior(
+  items: BatchEvaluateItem[],
+): Promise<BatchEvaluateItem[]> {
+  if (!process.env.ATLASENT_BEHAVIOR_BASE_URL) return items;
+  return Promise.all(
+    items.map(async (item) => {
+      const userId =
+        item.context &&
+        typeof item.context === "object" &&
+        typeof (item.context as Record<string, unknown>).user_id === "string"
+          ? (item.context as Record<string, unknown>).user_id as string
+          : null;
+      if (!userId) return item;
+      const behaviorCtx = await fetchBehaviorContext(userId);
+      if (Object.keys(behaviorCtx).length === 0) return item;
+      return {
+        ...item,
+        context: { ...(item.context as Record<string, unknown>), ...behaviorCtx },
+      };
+    }),
+  );
+}
+
+// C.MCP1: map escalate decision to distinct error surface.
+function checkEscalate(result: unknown): ReturnType<typeof toolResult> | null {
+  if (
+    result &&
+    typeof result === "object" &&
+    !Array.isArray(result) &&
+    (result as Record<string, unknown>).decision === "escalate"
+  ) {
+    return toolResult({
+      error: "escalate",
+      reasons: (result as Record<string, unknown>).reasons ?? [],
+      message:
+        "Decision returned escalate — route to human review before proceeding.",
+    });
+  }
+  return null;
+}
+
 /**
  * Register the three Wave B v2 tools onto an existing McpServer.
  *
@@ -101,16 +196,25 @@ export function registerV2Tools(server: McpServer): void {
       },
     },
     async (args) => {
+      logAudit("atlasent_evaluate_many");
+      if (process.env.ATLASENT_MCP_READONLY === "1" || process.env.ATLASENT_MCP_READONLY === "true") {
+        return toolResult({ error: "readonly", message: "Tool disabled: ATLASENT_MCP_READONLY=1" });
+      }
       try {
-        const items: BatchEvaluateItem[] = args.items.map((it) => ({
+        let items: BatchEvaluateItem[] = args.items.map((it) => ({
           action: it.action,
           agent: it.agent,
           ...(it.context !== undefined ? { context: it.context } : {}),
         }));
+        // C.MCP1: enrich with behavior context
+        items = await enrichItemsWithBehavior(items);
         const result = await evaluateBatch({
           items,
           ...(args.batch_id !== undefined ? { batch_id: args.batch_id } : {}),
         });
+        // C.MCP1: surface escalate as distinct error
+        const escalateResult = checkEscalate(result);
+        if (escalateResult) return escalateResult;
         return toolResult(result as unknown as Record<string, unknown>);
       } catch (e) {
         if (e instanceof FeatureNotEnabledError) return featureNotEnabledResult(e);
@@ -121,16 +225,6 @@ export function registerV2Tools(server: McpServer): void {
 
   // -------------------------------------------------------------------------
   // atlasent_evaluate_stream — POST /v1/evaluate/stream (buffered)
-  //
-  // MCP tool calls are request/response. This tool BUFFERS the SSE stream
-  // and returns the complete result set (same shape as the batch tool) once
-  // the terminal `event: complete` arrives. Per-item RPC failures arrive as
-  // `event: error` frames and surface in the items array with a `{ error }`
-  // shape; the stream itself does not abort on per-item failure.
-  //
-  // True per-item streaming to the MCP host is left to Streamable HTTP
-  // transports via the spec's server-sent progress channel — out of scope
-  // for the tool surface itself (the tool returns one value).
   // -------------------------------------------------------------------------
   server.registerTool(
     "atlasent_evaluate_stream",
@@ -159,16 +253,24 @@ export function registerV2Tools(server: McpServer): void {
       },
     },
     async (args) => {
+      logAudit("atlasent_evaluate_stream");
+      if (process.env.ATLASENT_MCP_READONLY === "1" || process.env.ATLASENT_MCP_READONLY === "true") {
+        return toolResult({ error: "readonly", message: "Tool disabled: ATLASENT_MCP_READONLY=1" });
+      }
       try {
-        const items: BatchEvaluateItem[] = args.items.map((it) => ({
+        let items: BatchEvaluateItem[] = args.items.map((it) => ({
           action: it.action,
           agent: it.agent,
           ...(it.context !== undefined ? { context: it.context } : {}),
         }));
+        // C.MCP1: enrich with behavior context
+        items = await enrichItemsWithBehavior(items);
         const result = await evaluateStream({
           items,
           ...(args.batch_id !== undefined ? { batch_id: args.batch_id } : {}),
         });
+        const escalateResult = checkEscalate(result);
+        if (escalateResult) return escalateResult;
         return toolResult(result as unknown as Record<string, unknown>);
       } catch (e) {
         if (e instanceof FeatureNotEnabledError) return featureNotEnabledResult(e);
@@ -179,11 +281,6 @@ export function registerV2Tools(server: McpServer): void {
 
   // -------------------------------------------------------------------------
   // atlasent_query — POST /v1/graphql (read-only)
-  //
-  // The Wave A GraphQL schema has no mutations — `recentEvaluations(limit)`
-  // and `activeBundle` only. We expose this as a read-only tool. Body /
-  // depth / op-count caps are enforced server-side per the API contract;
-  // this tool only enforces a defensive query-length cap on the way in.
   // -------------------------------------------------------------------------
   server.registerTool(
     "atlasent_query",
@@ -214,6 +311,7 @@ export function registerV2Tools(server: McpServer): void {
       },
     },
     async (args) => {
+      logAudit("atlasent_query");
       try {
         const result = await graphqlQuery({
           query: args.query,

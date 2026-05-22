@@ -204,6 +204,9 @@ const READONLY_DISABLED_TOOLS = new Set([
   "atlasent_delete_webhook",
   "atlasent_revoke_permit",
   "atlasent_permit",
+  // C.MCP2: v2 mutating tools also disabled in readonly mode
+  "atlasent_evaluate_many",
+  "atlasent_evaluate_stream",
 ]);
 
 export function isToolDisabledByReadOnly(toolName: string): boolean {
