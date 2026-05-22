@@ -147,12 +147,21 @@ async function get<T>(path: string, params?: Record<string, string | undefined>)
 // Canonical evaluate response shape (v1-evaluate/handler.ts):
 //   { decision: "allow"|"deny"|"hold"|"escalate",
 //     permit_token?: string, request_id?: string, expires_at?: string,
+//     envelope_hash?: string,
 //     denial?: { reasons: string[], code: string } }
+//
+// `envelope_hash` is the sha-256 of the canonical ContextEnvelopeV1 the API
+// records for the evaluation (see _shared/context-envelope-v1.ts in
+// atlasent-api). When present, it is the canonical join key between this
+// decision, the issued permit, the consumed payload, and any constrained-
+// agent finding produced during the same evaluation. We surface it through
+// the Decision so MCP tool hosts can stamp it into agent-side audit.
 interface RawEvaluate {
   decision: string;
   permit_token?: string;
   reasons?: string[];
   request_id?: string;
+  envelope_hash?: string;
   denial?: { reasons?: string[]; code?: string };
   conditions?: string[];
   hold_id?: string;
@@ -173,11 +182,13 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
 
   // Normalise request_id → audit_id (canonical API contract uses request_id).
   const audit_id = data.request_id;
+  const envelope_hash = data.envelope_hash;
 
   if (data.decision === "allow") {
     if (!data.permit_token) throw new Error("Remote allowed the action but returned no permit_token");
     const out: Decision = { decision: "allow", permit_token: data.permit_token };
     if (audit_id) out.audit_id = audit_id;
+    if (envelope_hash) out.envelope_hash = envelope_hash;
     if (data.conditions?.length) out.conditions = data.conditions;
     return out;
   }
@@ -189,6 +200,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
       reasons,
       ...(data.hold_id && { hold_id: data.hold_id }),
       ...(audit_id && { audit_id }),
+      ...(envelope_hash && { envelope_hash }),
     };
   }
 
@@ -198,6 +210,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     decision: "deny",
     reasons,
     ...(audit_id && { audit_id }),
+    ...(envelope_hash && { envelope_hash }),
   };
 }
 
