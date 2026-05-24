@@ -267,12 +267,28 @@ async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyRe
 // raw API response; no local-engine fallback (they require remote mode).
 // ---------------------------------------------------------------------------
 
+export interface RiskEnvelopeFactor {
+  score: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface RiskEnvelope {
+  weighted_score: number;
+  engine_decision: string;
+  envelope_decision: string;
+  promoted: boolean;
+  hard_blocks: string[];
+  factors?: Record<string, RiskEnvelopeFactor>;
+}
+
 export interface EvaluateParams {
   subject: string;
   action: string;
   resource: string;
   org_id: string;
   context?: Record<string, unknown>;
+  explain?: boolean;
 }
 
 export interface EvaluateResponse {
@@ -281,6 +297,7 @@ export interface EvaluateResponse {
   permit?: string;
   permitToken?: string;
   reasons?: string[];
+  risk_envelope?: RiskEnvelope;
   [key: string]: unknown;
 }
 
@@ -292,6 +309,7 @@ export async function evaluateAction(params: EvaluateParams): Promise<EvaluateRe
     org_id: params.org_id,
   };
   if (params.context !== undefined) body.context = params.context;
+  if (params.explain !== undefined) body.explain = params.explain;
   return post<EvaluateResponse>("/v1-evaluate", body);
 }
 

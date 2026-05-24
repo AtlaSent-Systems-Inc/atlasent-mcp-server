@@ -1306,3 +1306,164 @@ describe("atlasent_delete_webhook", () => {
     assert.match(text, /webhook_id/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// atlasent_evaluate — explain flag and risk_envelope
+// ---------------------------------------------------------------------------
+
+describe("atlasent_evaluate explain + risk_envelope", () => {
+  it("forwards explain=true to the API request body", async () => {
+    forceRemoteMode();
+    const captured: { body: unknown }[] = [];
+    globalThis.fetch = mock.fn(async (_url, init) => {
+      captured.push({ body: JSON.parse((init?.body as string) ?? "{}") });
+      return new Response(
+        JSON.stringify({ decision: "allow", permitToken: "pt_explain_1" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: {
+        subject: "user:alice",
+        action: "production.deploy",
+        resource: "env:prod",
+        org_id: "org_1",
+        explain: true,
+      },
+    });
+    const body = captured[0].body as Record<string, unknown>;
+    assert.equal(body.explain, true);
+  });
+
+  it("does not include explain in the API body when omitted", async () => {
+    forceRemoteMode();
+    const captured: { body: unknown }[] = [];
+    globalThis.fetch = mock.fn(async (_url, init) => {
+      captured.push({ body: JSON.parse((init?.body as string) ?? "{}") });
+      return new Response(
+        JSON.stringify({ decision: "allow", permitToken: "pt_no_explain" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: {
+        subject: "user:alice",
+        action: "production.deploy",
+        resource: "env:prod",
+        org_id: "org_1",
+      },
+    });
+    const body = captured[0].body as Record<string, unknown>;
+    assert.equal("explain" in body, false);
+  });
+
+  it("includes risk_envelope in the response when the API returns one", async () => {
+    forceRemoteMode();
+    const riskEnvelope = {
+      weighted_score: 0.72,
+      engine_decision: "allow",
+      envelope_decision: "allow",
+      promoted: false,
+      hard_blocks: [],
+      factors: {
+        time_of_day: { score: 0.3, weight: 0.5, contribution: 0.15 },
+        approval_count: { score: 1.0, weight: 0.5, contribution: 0.5 },
+      },
+    };
+    globalThis.fetch = mock.fn(async () =>
+      new Response(
+        JSON.stringify({
+          decision: "allow",
+          permitToken: "pt_risk_1",
+          risk_envelope: riskEnvelope,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: {
+        subject: "user:alice",
+        action: "production.deploy",
+        resource: "env:prod",
+        org_id: "org_1",
+        explain: true,
+      },
+    });
+    const data = parseResult(result);
+    const envelope = data.risk_envelope as Record<string, unknown>;
+    assert.ok(envelope, "risk_envelope must be present");
+    assert.equal(envelope.weighted_score, 0.72);
+    assert.equal(envelope.engine_decision, "allow");
+    assert.equal(envelope.envelope_decision, "allow");
+    assert.equal(envelope.promoted, false);
+    assert.deepEqual(envelope.hard_blocks, []);
+    const factors = envelope.factors as Record<string, unknown>;
+    assert.ok(factors, "factors must be present");
+    assert.deepEqual(factors.time_of_day, { score: 0.3, weight: 0.5, contribution: 0.15 });
+    assert.deepEqual(factors.approval_count, { score: 1.0, weight: 0.5, contribution: 0.5 });
+  });
+
+  it("omits risk_envelope from the response when the API does not return one", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mock.fn(async () =>
+      new Response(
+        JSON.stringify({ decision: "allow", permitToken: "pt_no_risk" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: {
+        subject: "user:alice",
+        action: "production.deploy",
+        resource: "env:prod",
+        org_id: "org_1",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.risk_envelope, undefined);
+  });
+
+  it("includes risk_envelope without factors when explain is not set", async () => {
+    forceRemoteMode();
+    const riskEnvelope = {
+      weighted_score: 0.45,
+      engine_decision: "allow",
+      envelope_decision: "allow",
+      promoted: false,
+      hard_blocks: [],
+    };
+    globalThis.fetch = mock.fn(async () =>
+      new Response(
+        JSON.stringify({
+          decision: "allow",
+          permitToken: "pt_risk_no_factors",
+          risk_envelope: riskEnvelope,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: {
+        subject: "user:alice",
+        action: "production.deploy",
+        resource: "env:prod",
+        org_id: "org_1",
+      },
+    });
+    const data = parseResult(result);
+    const envelope = data.risk_envelope as Record<string, unknown>;
+    assert.ok(envelope, "risk_envelope must be present");
+    assert.equal(envelope.weighted_score, 0.45);
+    assert.equal(envelope.factors, undefined);
+  });
+});

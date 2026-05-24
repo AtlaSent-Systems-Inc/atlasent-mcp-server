@@ -460,6 +460,10 @@ export function createServer(): McpServer {
           .record(z.string(), z.unknown())
           .optional()
           .describe("Key-value context matched against constraint rules."),
+        explain: z
+          .boolean()
+          .optional()
+          .describe("When true, populates risk_envelope.factors with a per-factor score breakdown"),
       }),
       annotations: {
         title: "AtlaSent — Evaluate (Remote API)",
@@ -482,6 +486,7 @@ export function createServer(): McpServer {
           resource: args.resource,
           org_id: args.org_id,
           context: args.context,
+          ...(args.explain !== undefined ? { explain: args.explain } : {}),
         });
         log("atlasent_evaluate", { result });
         return toolResult(result);
