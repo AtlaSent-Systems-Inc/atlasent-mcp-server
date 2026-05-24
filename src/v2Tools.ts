@@ -75,54 +75,34 @@ function logAudit(toolName: string, extra?: Record<string, unknown>): void {
   process.stderr.write(JSON.stringify(entry) + "\n");
 }
 
-// C.MCP1: behavior client — reads redacted StateSummary from behavior-insights.
-// Fail-open: returns {} on any error.
-interface StateSummary {
-  event_count: number;
-  window_start: string;
-  window_end: string;
-  category_counts: Record<string, number>;
-}
-
-async function fetchBehaviorContext(userId: string): Promise<Record<string, unknown>> {
-  const baseUrl = process.env.ATLASENT_BEHAVIOR_BASE_URL;
-  const apiKey = process.env.ATLASENT_BEHAVIOR_API_KEY;
-  if (!baseUrl || !apiKey) return {};
+// C.MCP1: enrich batch items with bvsSnapshot context when user_id is present.
+// Fail-open: items are forwarded unchanged when behavior service is unavailable.
+// Endpoint: /api/patterns/snapshot/:userId — BI4 wire shape; result goes into
+// context.bvsSnapshot so /v1-evaluate can read it from context.bvsSnapshot.
+async function fetchBvsSnapshot(userId: string, baseUrl: string, apiKey: string): Promise<Record<string, unknown>> {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5_000);
     const res = await fetch(
-      `${baseUrl.replace(/\/$/, "")}/api/patterns/summary/${encodeURIComponent(userId)}`,
+      `${baseUrl.replace(/\/$/, "")}/api/patterns/snapshot/${encodeURIComponent(userId)}`,
       {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        signal: controller.signal,
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000),
       },
     );
-    clearTimeout(timer);
     if (!res.ok) return {};
-    const summary = (await res.json()) as StateSummary | null;
-    if (!summary) return {};
-    return {
-      user_state: {
-        event_count: summary.event_count,
-        window_start: summary.window_start,
-        window_end: summary.window_end,
-        confidence_low: Object.keys(summary.category_counts ?? {}).length === 0,
-      },
-    };
+    const snapshot = (await res.json()) as Record<string, unknown> | null;
+    if (!snapshot) return {};
+    return { bvsSnapshot: snapshot };
   } catch {
     return {};
   }
 }
 
-// C.MCP1: enrich batch items with behavior context when user_id is present.
 async function enrichItemsWithBehavior(
   items: BatchEvaluateItem[],
 ): Promise<BatchEvaluateItem[]> {
-  if (!process.env.ATLASENT_BEHAVIOR_BASE_URL) return items;
+  const baseUrl = process.env.ATLASENT_BEHAVIOR_BASE_URL;
+  const apiKey = process.env.ATLASENT_BEHAVIOR_API_KEY;
+  if (!baseUrl || !apiKey) return items;
   return Promise.all(
     items.map(async (item) => {
       const userId =
@@ -132,7 +112,7 @@ async function enrichItemsWithBehavior(
           ? (item.context as Record<string, unknown>).user_id as string
           : null;
       if (!userId) return item;
-      const behaviorCtx = await fetchBehaviorContext(userId);
+      const behaviorCtx = await fetchBvsSnapshot(userId, baseUrl, apiKey);
       if (Object.keys(behaviorCtx).length === 0) return item;
       return {
         ...item,
