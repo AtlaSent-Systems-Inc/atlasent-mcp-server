@@ -23,7 +23,6 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { attachToEvaluate } from "@atlasent/behavior";
 import { toolResult } from "./decision.js";
 import {
   evaluateBatch,
@@ -77,8 +76,27 @@ function logAudit(toolName: string, extra?: Record<string, unknown>): void {
 }
 
 // C.MCP1: enrich batch items with bvsSnapshot context when user_id is present.
-// Uses @atlasent/behavior attachToEvaluate — returns { bvsSnapshot } or {} on error.
 // Fail-open: items are forwarded unchanged when behavior service is unavailable.
+// Endpoint: /api/patterns/snapshot/:userId — BI4 wire shape; result goes into
+// context.bvsSnapshot so /v1-evaluate can read it from context.bvsSnapshot.
+async function fetchBvsSnapshot(userId: string, baseUrl: string, apiKey: string): Promise<Record<string, unknown>> {
+  try {
+    const res = await fetch(
+      `${baseUrl.replace(/\/$/, "")}/api/patterns/snapshot/${encodeURIComponent(userId)}`,
+      {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) return {};
+    const snapshot = (await res.json()) as Record<string, unknown> | null;
+    if (!snapshot) return {};
+    return { bvsSnapshot: snapshot };
+  } catch {
+    return {};
+  }
+}
+
 async function enrichItemsWithBehavior(
   items: BatchEvaluateItem[],
 ): Promise<BatchEvaluateItem[]> {
@@ -94,7 +112,7 @@ async function enrichItemsWithBehavior(
           ? (item.context as Record<string, unknown>).user_id as string
           : null;
       if (!userId) return item;
-      const behaviorCtx = await attachToEvaluate(userId, { baseUrl, apiKey }).catch(() => ({}));
+      const behaviorCtx = await fetchBvsSnapshot(userId, baseUrl, apiKey);
       if (Object.keys(behaviorCtx).length === 0) return item;
       return {
         ...item,
