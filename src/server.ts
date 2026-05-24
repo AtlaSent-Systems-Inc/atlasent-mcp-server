@@ -36,6 +36,7 @@ import {
   deleteWebhook,
 } from "./engine.js";
 import { registerV2Tools } from "./v2Tools.js";
+import { registerComplianceTools } from "./complianceTools.js";
 
 export const VERSION = "1.0.0";
 
@@ -51,7 +52,7 @@ const actionType = z
   .min(1)
   .max(MAX_FIELD_LEN)
   .regex(
-    /^[A-Za-z0-9_.\.\-:]+$/,
+    /^[A-Za-z0-9_.\.-:]+$/,
     "action_type must be lowercase identifier characters (A-Z, a-z, 0-9, _ . - :)",
   )
   .describe("The action the agent is about to perform (e.g. deploy, delete, merge, execute_query, send_email).");
@@ -207,6 +208,12 @@ const READONLY_DISABLED_TOOLS = new Set([
   // C.MCP2: v2 mutating tools also disabled in readonly mode
   "atlasent_evaluate_many",
   "atlasent_evaluate_stream",
+  // Compliance mutating tools
+  "atlasent_create_scim_user",
+  "atlasent_patch_scim_user",
+  "atlasent_delete_scim_user",
+  "atlasent_upsert_siem_config",
+  "atlasent_create_evidence_export",
 ]);
 
 export function isToolDisabledByReadOnly(toolName: string): boolean {
@@ -517,7 +524,7 @@ export function createServer(): McpServer {
       }
       try {
         const result = await listPolicies({ org_id: args.org_id, status: args.status });
-        return toolResult(result);
+        return toolResult(result as Record<string, unknown>);
       } catch (e) {
         return toolError(e);
       }
@@ -557,7 +564,7 @@ export function createServer(): McpServer {
       }
       try {
         const result = await getPolicy({ policy_id: args.policy_id, org_id: args.org_id });
-        return toolResult(result);
+        return toolResult(result as Record<string, unknown>);
       } catch (e) {
         return toolError(e);
       }
@@ -620,7 +627,7 @@ export function createServer(): McpServer {
           to: args.to,
           limit: args.limit,
         });
-        return toolResult(result);
+        return toolResult(result as Record<string, unknown>);
       } catch (e) {
         return toolError(e);
       }
@@ -722,7 +729,7 @@ export function createServer(): McpServer {
             effective_at: args.effective_at,
             expires_at: args.expires_at,
           });
-          return toolResult(result);
+          return toolResult(result as Record<string, unknown>);
         } catch (e) {
           return toolError(e);
         }
@@ -826,7 +833,7 @@ export function createServer(): McpServer {
             effective_at: args.effective_at,
             expires_at: args.expires_at,
           });
-          return toolResult(result);
+          return toolResult(result as Record<string, unknown>);
         } catch (e) {
           return toolError(e);
         }
@@ -868,7 +875,7 @@ export function createServer(): McpServer {
         }
         try {
           const result = await deletePolicy({ policy_id: args.policy_id, org_id: args.org_id });
-          return toolResult(result);
+          return toolResult(result as Record<string, unknown>);
         } catch (e) {
           return toolError(e);
         }
@@ -920,7 +927,7 @@ export function createServer(): McpServer {
             org_id: args.org_id,
             reasons: args.reasons,
           });
-          return toolResult(result);
+          return toolResult(result as Record<string, unknown>);
         } catch (e) {
           return toolError(e);
         }
@@ -1001,7 +1008,7 @@ export function createServer(): McpServer {
           to: args.to,
           cursor: args.cursor,
         });
-        return toolResult(result);
+        return toolResult(result as Record<string, unknown>);
       } catch (e) {
         return toolError(e);
       }
@@ -1072,7 +1079,7 @@ export function createServer(): McpServer {
             ttl_seconds: args.ttl_seconds,
             context: args.context,
           });
-          return toolResult(result);
+          return toolResult(result as Record<string, unknown>);
         } catch (e) {
           return toolError(e);
         }
@@ -1132,7 +1139,7 @@ export function createServer(): McpServer {
           action: args.action,
           resource: args.resource,
         });
-        return toolResult(result);
+        return toolResult(result as Record<string, unknown>);
       } catch (e) {
         return toolError(e);
       }
@@ -1201,7 +1208,7 @@ export function createServer(): McpServer {
           justification: args.justification,
           context: args.context,
         });
-        return toolResult(result);
+        return toolResult(result as Record<string, unknown>);
       } catch (e) {
         return toolError(e);
       }
@@ -1262,7 +1269,7 @@ export function createServer(): McpServer {
           resolver_id: args.resolver_id,
           comment: args.comment,
         });
-        return toolResult(result);
+        return toolResult(result as Record<string, unknown>);
       } catch (e) {
         return toolError(e);
       }
@@ -1322,7 +1329,7 @@ export function createServer(): McpServer {
           executed_at: args.executed_at,
           details: args.details,
         });
-        return toolResult(result);
+        return toolResult(result as Record<string, unknown>);
       } catch (e) {
         return toolError(e);
       }
@@ -1382,7 +1389,7 @@ export function createServer(): McpServer {
             description: args.description,
             secret: args.secret,
           });
-          return toolResult(result);
+          return toolResult(result as Record<string, unknown>);
         } catch (e) {
           return toolError(e);
         }
@@ -1424,7 +1431,7 @@ export function createServer(): McpServer {
         }
         try {
           const result = await deleteWebhook({ webhook_id: args.webhook_id, org_id: args.org_id });
-          return toolResult(result);
+          return toolResult(result as Record<string, unknown>);
         } catch (e) {
           return toolError(e);
         }
@@ -1438,6 +1445,11 @@ export function createServer(): McpServer {
   // typed `feature_not_enabled` error.
   // -------------------------------------------------------------------------
   registerV2Tools(server);
+
+  // -------------------------------------------------------------------------
+  // Compliance tools: SCIM provisioning, SIEM delivery, evidence exports.
+  // -------------------------------------------------------------------------
+  registerComplianceTools(server);
 
   return server;
 }
