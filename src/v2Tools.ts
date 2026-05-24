@@ -23,6 +23,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { attachToEvaluate } from "@atlasent/behavior";
 import { toolResult } from "./decision.js";
 import {
   evaluateBatch,
@@ -75,54 +76,15 @@ function logAudit(toolName: string, extra?: Record<string, unknown>): void {
   process.stderr.write(JSON.stringify(entry) + "\n");
 }
 
-// C.MCP1: behavior client — reads redacted StateSummary from behavior-insights.
-// Fail-open: returns {} on any error.
-interface StateSummary {
-  event_count: number;
-  window_start: string;
-  window_end: string;
-  category_counts: Record<string, number>;
-}
-
-async function fetchBehaviorContext(userId: string): Promise<Record<string, unknown>> {
-  const baseUrl = process.env.ATLASENT_BEHAVIOR_BASE_URL;
-  const apiKey = process.env.ATLASENT_BEHAVIOR_API_KEY;
-  if (!baseUrl || !apiKey) return {};
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5_000);
-    const res = await fetch(
-      `${baseUrl.replace(/\/$/, "")}/api/patterns/summary/${encodeURIComponent(userId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        signal: controller.signal,
-      },
-    );
-    clearTimeout(timer);
-    if (!res.ok) return {};
-    const summary = (await res.json()) as StateSummary | null;
-    if (!summary) return {};
-    return {
-      user_state: {
-        event_count: summary.event_count,
-        window_start: summary.window_start,
-        window_end: summary.window_end,
-        confidence_low: Object.keys(summary.category_counts ?? {}).length === 0,
-      },
-    };
-  } catch {
-    return {};
-  }
-}
-
-// C.MCP1: enrich batch items with behavior context when user_id is present.
+// C.MCP1: enrich batch items with bvsSnapshot context when user_id is present.
+// Uses @atlasent/behavior attachToEvaluate — returns { bvsSnapshot } or {} on error.
+// Fail-open: items are forwarded unchanged when behavior service is unavailable.
 async function enrichItemsWithBehavior(
   items: BatchEvaluateItem[],
 ): Promise<BatchEvaluateItem[]> {
-  if (!process.env.ATLASENT_BEHAVIOR_BASE_URL) return items;
+  const baseUrl = process.env.ATLASENT_BEHAVIOR_BASE_URL;
+  const apiKey = process.env.ATLASENT_BEHAVIOR_API_KEY;
+  if (!baseUrl || !apiKey) return items;
   return Promise.all(
     items.map(async (item) => {
       const userId =
@@ -132,7 +94,7 @@ async function enrichItemsWithBehavior(
           ? (item.context as Record<string, unknown>).user_id as string
           : null;
       if (!userId) return item;
-      const behaviorCtx = await fetchBehaviorContext(userId);
+      const behaviorCtx = await attachToEvaluate(userId, { baseUrl, apiKey }).catch(() => ({}));
       if (Object.keys(behaviorCtx).length === 0) return item;
       return {
         ...item,
