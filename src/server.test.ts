@@ -77,29 +77,41 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("tools/list", () => {
-  it("exposes evaluate, verify_permit, deploy_service, all write tools, and v2 tools", async () => {
+  it("exposes evaluate, verify_permit, deploy_service, all write tools, v2 tools, and compliance tools", async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "atlasent_create_approval_request",
+      "atlasent_create_evidence_export",
       "atlasent_create_policy",
+      "atlasent_create_scim_user",
       "atlasent_create_webhook",
       "atlasent_delete_policy",
+      "atlasent_delete_scim_user",
       "atlasent_delete_webhook",
       "atlasent_evaluate",
       "atlasent_evaluate_many",
       "atlasent_evaluate_stream",
+      "atlasent_get_evidence_export",
       "atlasent_get_policy",
+      "atlasent_get_scim_user",
+      "atlasent_get_siem_config",
       "atlasent_list_audit_events",
+      "atlasent_list_evidence_exports",
       "atlasent_list_permits",
       "atlasent_list_policies",
+      "atlasent_list_scim_groups",
+      "atlasent_list_scim_users",
+      "atlasent_patch_scim_user",
       "atlasent_permit",
       "atlasent_query",
       "atlasent_record_execution_evaluation",
       "atlasent_resolve_approval_request",
       "atlasent_revoke_permit",
+      "atlasent_test_siem_delivery",
       "atlasent_update_policy",
+      "atlasent_upsert_siem_config",
       "atlasent_verify_permit",
       "deploy_service",
       "evaluate",

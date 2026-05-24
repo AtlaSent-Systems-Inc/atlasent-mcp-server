@@ -604,3 +604,129 @@ export async function deleteWebhook(params: DeleteWebhookParams): Promise<unknow
     org_id: params.org_id,
   });
 }
+
+// ---------------------------------------------------------------------------
+// HTTP PUT helper
+// ---------------------------------------------------------------------------
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${baseUrl()}${path}`, {
+    method: "PUT",
+    headers: buildHeaders(),
+    body: JSON.stringify(body),
+    signal: makeAbortSignal(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    handleHttpError(res.status, text);
+  }
+  return (await res.json()) as T;
+}
+
+// ---------------------------------------------------------------------------
+// SCIM 2.0 provisioning
+// ---------------------------------------------------------------------------
+
+export async function listScimUsers(
+  orgId: string,
+  filter?: string,
+  startIndex?: number,
+  count?: number,
+): Promise<unknown> {
+  return get(`/v1/orgs/${encodeURIComponent(orgId)}/scim/v2/Users`, {
+    filter,
+    startIndex: startIndex !== undefined ? String(startIndex) : undefined,
+    count: count !== undefined ? String(count) : undefined,
+  });
+}
+
+export async function getScimUser(orgId: string, userId: string): Promise<unknown> {
+  return get(
+    `/v1/orgs/${encodeURIComponent(orgId)}/scim/v2/Users/${encodeURIComponent(userId)}`,
+  );
+}
+
+export async function createScimUser(
+  orgId: string,
+  attributes: Record<string, unknown>,
+): Promise<unknown> {
+  return post(`/v1/orgs/${encodeURIComponent(orgId)}/scim/v2/Users`, {
+    schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+    ...attributes,
+  });
+}
+
+export async function patchScimUser(
+  orgId: string,
+  userId: string,
+  operations: Array<{ op: string; path?: string; value?: unknown }>,
+): Promise<unknown> {
+  return patch(
+    `/v1/orgs/${encodeURIComponent(orgId)}/scim/v2/Users/${encodeURIComponent(userId)}`,
+    {
+      schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+      Operations: operations,
+    },
+  );
+}
+
+export async function deleteScimUser(orgId: string, userId: string): Promise<unknown> {
+  return del(
+    `/v1/orgs/${encodeURIComponent(orgId)}/scim/v2/Users/${encodeURIComponent(userId)}`,
+  );
+}
+
+export async function listScimGroups(
+  orgId: string,
+  filter?: string,
+  startIndex?: number,
+  count?: number,
+): Promise<unknown> {
+  return get(`/v1/orgs/${encodeURIComponent(orgId)}/scim/v2/Groups`, {
+    filter,
+    startIndex: startIndex !== undefined ? String(startIndex) : undefined,
+    count: count !== undefined ? String(count) : undefined,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// SIEM export configuration
+// ---------------------------------------------------------------------------
+
+export async function getSiemConfig(orgId: string): Promise<unknown> {
+  return get(`/v1/orgs/${encodeURIComponent(orgId)}/siem-config`);
+}
+
+export async function upsertSiemConfig(
+  orgId: string,
+  config: Record<string, unknown>,
+): Promise<unknown> {
+  return put(`/v1/orgs/${encodeURIComponent(orgId)}/siem-config`, config);
+}
+
+export async function testSiemDelivery(orgId: string): Promise<unknown> {
+  return post(`/v1/orgs/${encodeURIComponent(orgId)}/siem-exports/test`, {});
+}
+
+// ---------------------------------------------------------------------------
+// Evidence exports (compliance bundles)
+// ---------------------------------------------------------------------------
+
+export async function listEvidenceExports(orgId: string, regime?: string): Promise<unknown> {
+  return get(`/v1/orgs/${encodeURIComponent(orgId)}/evidence-exports`, {
+    regime,
+  });
+}
+
+export async function getEvidenceExport(orgId: string, exportId: string): Promise<unknown> {
+  return get(
+    `/v1/orgs/${encodeURIComponent(orgId)}/evidence-exports/${encodeURIComponent(exportId)}`,
+  );
+}
+
+export async function createEvidenceExport(
+  orgId: string,
+  payload: { regime: string; date_from?: string; date_to?: string },
+): Promise<unknown> {
+  return post(`/v1/orgs/${encodeURIComponent(orgId)}/evidence-exports`, payload);
+}
