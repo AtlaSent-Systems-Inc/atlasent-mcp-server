@@ -29,7 +29,7 @@ This is a **major version bump** (v2 config schema).
 // v2 config
 {
   "atlasEntApiUrl": "https://api.atlasent.io",
-  "atlasEntApiKey": "atk_live_..."
+  "atlasEntApiKey": "ask_live_..."
 }
 ```
 
@@ -57,12 +57,12 @@ Update your MCP server config file:
 // ~/.config/atlasent-mcp/config.json
 {
   "atlasEntApiUrl": "https://api.atlasent.io",
-  "atlasEntApiKey": "atk_live_YOUR_KEY"
+  "atlasEntApiKey": "ask_live_YOUR_KEY"
 }
 ```
 
 Or via environment variables:
 ```bash
 ATLASENT_API_URL=https://api.atlasent.io
-ATLASENT_API_KEY=atk_live_YOUR_KEY
+ATLASENT_API_KEY=ask_live_YOUR_KEY
 ```
