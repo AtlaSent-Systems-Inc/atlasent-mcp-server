@@ -77,7 +77,7 @@ function buildHeaders(): Record<string, string> {
 }
 
 function baseUrl(): string {
-  return (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.com").replace(/\/+$/, "");
+  return (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.io").replace(/\/+$/, "");
 }
 
 function handleHttpError(status: number, body: string): never {

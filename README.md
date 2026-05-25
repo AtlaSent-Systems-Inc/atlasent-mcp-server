@@ -41,7 +41,7 @@ The demo uses `local` mode (no API key needed). To run the same demo against the
 ```bash
 ATLASENT_MODE=remote \
   ATLASENT_API_KEY=ask_live_xxx \
-  ATLASENT_BASE_URL=https://api.atlasent.com \
+  ATLASENT_BASE_URL=https://api.atlasent.io \
   ATLASENT_MCP_READONLY=1 \
   npm run demo
 ```
@@ -353,7 +353,7 @@ The engine behind `authorize()` is pluggable. The same tool handlers work in bot
 |---|---|---|---|
 | `ATLASENT_MODE` | no | auto-detect | Force `local` or `remote` |
 | `ATLASENT_API_KEY` | remote only | — | Bearer token for the hosted API (prefix: `ask_live_` / `ask_test_`) |
-| `ATLASENT_BASE_URL` | remote only | `https://api.atlasent.com` | Hosted API base URL |
+| `ATLASENT_BASE_URL` | remote only | `https://api.atlasent.io` | Hosted API base URL |
 | `ATLASENT_ANON_KEY` | no | — | Optional `x-anon-key` header |
 | `ATLASENT_MCP_RATE_LIMIT` | no | `600` | Per-tool calls per minute (token bucket) |
 | `ATLASENT_MCP_READONLY` | no | (unset) | If `1` or `true`, skip registration of the 7 mutating tools. **Recommended for live-API demos.** See [Read-only mode](#read-only-mode-for-live-demos). |
@@ -393,7 +393,7 @@ On startup, the server emits a `server.readonly_mode` structured log line to std
       "env": {
         "ATLASENT_MODE": "remote",
         "ATLASENT_API_KEY": "ask_live_xxxxxxxxxxxxxxxx",
-        "ATLASENT_BASE_URL": "https://api.atlasent.com",
+        "ATLASENT_BASE_URL": "https://api.atlasent.io",
         "ATLASENT_MCP_READONLY": "1"
       }
     }

@@ -50,7 +50,7 @@ function makeAbortSignal(ms: number): { signal: AbortSignal; cancel: () => void 
 }
 
 function baseUrl(): string {
-  return (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.com").replace(
+  return (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.io").replace(
     /\/+$/,
     "",
   );

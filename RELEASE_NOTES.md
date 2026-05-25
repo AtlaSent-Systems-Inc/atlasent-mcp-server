@@ -26,7 +26,7 @@ First stable release of the AtlaSent MCP server. Works with Claude Desktop, Curs
     "atlasent": {
       "command": "npx",
       "args": ["-y", "@atlasent/mcp-server"],
-      "env": { "ATLASENT_API_KEY": "as_live_xxx" }
+      "env": { "ATLASENT_API_KEY": "ask_live_xxx" }
     }
   }
 }
