@@ -10,6 +10,12 @@
  *   (unset)                         → remote if ATLASENT_API_KEY and
  *                                      ATLASENT_BASE_URL are set, else local
  *
+ * Production safeguard: local-mode permits are unsigned and forgeable
+ * (Date.now() + UUID slice, no HMAC — see src/localEngine.ts shortId()).
+ * Local mode is intended for development and CI only. getMode() refuses
+ * to resolve to local when NODE_ENV=production unless the operator has
+ * explicitly opted in with ATLASENT_ALLOW_LOCAL_MODE_IN_PROD=true.
+ *
  * The hosted backend is a configuration swap, not a rewrite: every tool
  * handler calls `authorize(ctx)` and gets back the same Decision shape.
  */
@@ -33,10 +39,38 @@ export type Mode = "local" | "remote";
 
 export function getMode(): Mode {
   const explicit = process.env.ATLASENT_MODE?.toLowerCase();
-  if (explicit === "remote") return "remote";
-  if (explicit === "local") return "local";
-  if (process.env.ATLASENT_API_KEY && process.env.ATLASENT_BASE_URL) return "remote";
-  return "local";
+  const requested: Mode =
+    explicit === "remote"
+      ? "remote"
+      : explicit === "local"
+        ? "local"
+        : process.env.ATLASENT_API_KEY && process.env.ATLASENT_BASE_URL
+          ? "remote"
+          : "local";
+
+  // Production safeguard (security): local-mode permits are unsigned
+  // and forgeable (Date.now() + UUID slice, no HMAC; see
+  // src/localEngine.ts shortId()). Refuse to run local mode under
+  // NODE_ENV=production unless the operator has explicitly opted in
+  // with ATLASENT_ALLOW_LOCAL_MODE_IN_PROD=true. Without this guard,
+  // missing ATLASENT_API_KEY / ATLASENT_BASE_URL env vars in a
+  // production deployment would silently fall through to local mode,
+  // allowing anyone to mint valid-looking permits.
+  if (
+    requested === "local" &&
+    process.env.NODE_ENV === "production" &&
+    process.env.ATLASENT_ALLOW_LOCAL_MODE_IN_PROD !== "true"
+  ) {
+    throw new Error(
+      "MCP server refuses to run in local mode with NODE_ENV=production. " +
+        "Local-mode permits are unsigned and forgeable. Either set " +
+        "ATLASENT_API_KEY and ATLASENT_BASE_URL to use the hosted AtlaSent " +
+        "backend, or explicitly opt in (NOT RECOMMENDED) with " +
+        "ATLASENT_ALLOW_LOCAL_MODE_IN_PROD=true.",
+    );
+  }
+
+  return requested;
 }
 
 export async function authorize(ctx: ActionContext): Promise<Decision> {
