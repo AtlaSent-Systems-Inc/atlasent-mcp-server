@@ -49,10 +49,26 @@ We follow [responsible disclosure](https://cheatsheetseries.owasp.org/cheatsheet
 | Medium | Tool output that misleads the host model about authorization state | 30 days |
 | Low | Minor information disclosure in error messages | 90 days |
 
+## Maturity classification
+
+Per [`atlasent/MATURITY_DOCTRINE.md`](https://github.com/AtlaSent-Systems-Inc/atlasent/blob/main/MATURITY_DOCTRINE.md) (adopted 2026-05-26), the two engine modes carry distinct maturity tiers and **must not be confused** when assessing authorization guarantees:
+
+| Mode | Maturity | Permit signing | Use |
+|---|---|---|---|
+| **remote** (hosted AtlaSent backend) | **GA** | Server-side issued; bound to the canonical audit chain; verifiable offline via the Go `audit-verify` CLI | Production-authoritative authorization |
+| **local** (in-process rules engine) | **Experimental** | Unsigned: `pt_local_<base36 timestamp>_<UUID slice>`. **Forgeable** by any process that can read this source. | Development and CI only |
+
+**Operational consequences:**
+
+- Local-mode permits **must not** be treated as authorization evidence in any environment where the action's outcome has external consequences. They are a development convenience, not a security primitive.
+- The engine refuses to resolve to local mode under `NODE_ENV=production` unless the operator explicitly sets `ATLASENT_ALLOW_LOCAL_MODE_IN_PROD=true` (NOT RECOMMENDED). See `src/engine.ts` `getMode()` for the hard refusal.
+- When local mode resolves successfully (dev/CI), the engine emits a one-time stderr warning at first `authorize()` or `verify()` call so the operator cannot use local mode for long without noticing. Set `ATLASENT_SUPPRESS_LOCAL_MODE_WARNING=true` to silence the warning in noisy CI scripts.
+- Promotion of local mode to Beta or GA per `MATURITY_DOCTRINE.md` Doctrine 3 would require, at minimum: HMAC-signed permits, a real key store, and round-trip validation against the hosted backend. None of these exist today; the design intent is for local mode to remain Experimental indefinitely as a dev-only path.
+
 ## Security architecture overview
 
-- **Local mode**: Runs as a stdio MCP server. No network calls; evaluation logic is local. No credentials required.
-- **Remote mode**: Forwards tool calls to the AtlaSent edge function API using a Bearer token. The API key is read from the environment and never appears in MCP tool responses.
+- **Local mode** (Experimental): Runs as a stdio MCP server. No network calls; evaluation logic is local. No credentials required. **Permits are unsigned and forgeable** — dev/CI only.
+- **Remote mode** (GA): Forwards tool calls to the AtlaSent edge function API using a Bearer token. The API key is read from the environment and never appears in MCP tool responses. Permits are server-issued and audit-chain-bound.
 - **Fail-closed**: If the AtlaSent API is unreachable or returns an error, the `evaluate` tool returns `{"decision": "deny"}` by default. This behavior can be verified with `ATLASENT_FAIL_CLOSED=true`.
 - **Input validation**: All tool inputs are validated against a JSON Schema before forwarding to the API. Malformed inputs are rejected with an error, not forwarded.
 - **No persistent state**: The server holds no session state between MCP calls. Each call is independently authorized.
@@ -60,7 +76,8 @@ We follow [responsible disclosure](https://cheatsheetseries.owasp.org/cheatsheet
 ## Known limitations
 
 - `baseUrl` can be overridden via environment variable, which allows pointing the server at a non-AtlaSent host. Callers are responsible for ensuring the target host is trusted.
-- In local mode, policy evaluation runs locally and is only as current as the last policy sync. Stale policies are a known risk if the policy cache is not refreshed.
+- In local mode (Experimental), policy evaluation runs locally and is only as current as the last policy sync. Stale policies are a known risk if the policy cache is not refreshed.
+- In local mode (Experimental), permits are not cryptographically signed. They cannot be relied upon as evidence of authorization in any production-equivalent context. See "Maturity classification" above.
 
 ## Security contact
 
