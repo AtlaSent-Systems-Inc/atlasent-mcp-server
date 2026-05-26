@@ -16,6 +16,13 @@
  * to resolve to local when NODE_ENV=production unless the operator has
  * explicitly opted in with ATLASENT_ALLOW_LOCAL_MODE_IN_PROD=true.
  *
+ * Maturity classification (atlasent/MATURITY_DOCTRINE.md, adopted 2026-05-26):
+ *   - local mode   — **Experimental**. UI/runtime exists but permits are
+ *                    unsigned and forgeable. Dev/CI only. A stderr warning
+ *                    is emitted once per process when local mode resolves.
+ *   - remote mode  — **GA**. Hosted backend with signed permits and audit
+ *                    chain.
+ *
  * The hosted backend is a configuration swap, not a rewrite: every tool
  * handler calls `authorize(ctx)` and gets back the same Decision shape.
  */
@@ -36,6 +43,31 @@ function makeAbortSignal(ms: number): AbortSignal {
 }
 
 export type Mode = "local" | "remote";
+
+// Module-level flag: emit the local-mode maturity warning at most once
+// per process. getMode() is called on every authorize/verify, so without
+// this gate the warning would flood stderr.
+let LOCAL_MODE_WARNING_EMITTED = false;
+
+function emitLocalModeWarning(): void {
+  if (LOCAL_MODE_WARNING_EMITTED) return;
+  if (process.env.NODE_ENV === "test") return;
+  if (process.env.ATLASENT_SUPPRESS_LOCAL_MODE_WARNING === "true") return;
+  LOCAL_MODE_WARNING_EMITTED = true;
+  // eslint-disable-next-line no-console
+  console.error(
+    "[atlasent-mcp-server] WARNING: running in LOCAL mode. " +
+      "Local-mode permits are unsigned and forgeable " +
+      "(Date.now() + UUID, no HMAC). " +
+      "Per atlasent/MATURITY_DOCTRINE.md, local mode is classified " +
+      "Experimental and is intended for development and CI only. " +
+      "For production-authoritative authorization, set ATLASENT_API_KEY " +
+      "and ATLASENT_BASE_URL to use the hosted AtlaSent backend. " +
+      "See SECURITY.md § 'Maturity classification' for details. " +
+      "Set ATLASENT_SUPPRESS_LOCAL_MODE_WARNING=true to silence this warning " +
+      "in dev/CI scripts.",
+  );
+}
 
 export function getMode(): Mode {
   const explicit = process.env.ATLASENT_MODE?.toLowerCase();
@@ -68,6 +100,14 @@ export function getMode(): Mode {
         "backend, or explicitly opt in (NOT RECOMMENDED) with " +
         "ATLASENT_ALLOW_LOCAL_MODE_IN_PROD=true.",
     );
+  }
+
+  // Emit the maturity warning at most once per process when local mode
+  // is actually being used. This is the visibility companion to the
+  // hard production refusal above: dev/CI usage is permitted, but the
+  // operator should know they are running in Experimental mode.
+  if (requested === "local") {
+    emitLocalModeWarning();
   }
 
   return requested;
