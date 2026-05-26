@@ -10,17 +10,44 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write   # npm provenance + cosign keyless OIDC
     steps:
       - uses: actions/checkout@v6
+
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
       - run: npm ci
       - run: npm run build
       - run: npm test
-      - run: npm publish --provenance --access public
+
+      - name: Pack tarball
+        run: |
+          npm pack
+          PKG=$(ls *.tgz | head -1)
+          echo "PKG=$PKG" >> "$GITHUB_ENV"
+
+      - name: Sign tarball (cosign keyless)
+        # R4 keyless: OIDC short-lived cert via Sigstore Fulcio.
+        # No private key stored in secrets.
+        run: cosign sign-blob --yes --bundle="${PKG}.bundle" "${PKG}"
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosign-bundle
+          path: "*.bundle"
+          if-no-files-found: error
