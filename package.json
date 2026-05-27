@@ -1,6 +1,6 @@
 {
   "name": "@atlasent/mcp-server",
-  "version": "1.0.0",
+  "version": "2.11.0",
   "description": "AtlaSent MCP server — authorize-before-execute for any MCP-compatible AI agent",
   "type": "module",
   "main": "./dist/index.js",

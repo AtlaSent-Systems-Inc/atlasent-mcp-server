@@ -38,7 +38,7 @@ import {
 import { registerV2Tools } from "./v2Tools.js";
 import { registerComplianceTools } from "./complianceTools.js";
 
-export const VERSION = "1.0.0";
+export const VERSION = "2.11.0";
 
 // Bounds protect the upstream policy engine and the local rule engine
 // from a misbehaving / adversarial caller (e.g. an injected prompt that
