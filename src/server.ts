@@ -37,6 +37,7 @@ import {
 } from "./engine.js";
 import { registerV2Tools } from "./v2Tools.js";
 import { registerComplianceTools } from "./complianceTools.js";
+import { registerVqpTools } from "./vqpTools.js";
 
 export const VERSION = "2.11.0";
 
@@ -243,6 +244,9 @@ const READONLY_DISABLED_TOOLS = new Set([
   "atlasent_delete_scim_user",
   "atlasent_upsert_siem_config",
   "atlasent_create_evidence_export",
+  // VQP tools (mutating: generate writes vqp_snapshots, verify writes vqp_audit_log)
+  "atlasent_vqp_generate",
+  "atlasent_vqp_verify",
 ]);
 
 export function isToolDisabledByReadOnly(toolName: string): boolean {
@@ -1489,6 +1493,11 @@ export function createServer(): McpServer {
   // Compliance tools: SCIM provisioning, SIEM delivery, evidence exports.
   // -------------------------------------------------------------------------
   registerComplianceTools(server);
+
+  // -------------------------------------------------------------------------
+  // VQP tools: generate snapshots, verify hash integrity, detect model drift.
+  // -------------------------------------------------------------------------
+  registerVqpTools(server);
 
   return server;
 }
