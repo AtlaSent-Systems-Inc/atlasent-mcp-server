@@ -157,6 +157,35 @@ function log(event: string, data: Record<string, unknown>): void {
   process.stderr.write(line + "\n");
 }
 
+// ---------------------------------------------------------------------------
+// Agent tool gate — outer layer for the two-layer authorization pattern.
+//
+// Call this FIRST in any protected tool handler, before any tool-specific
+// authorize() call. It asks: "is this AI agent permitted to invoke any
+// tool on this server at all?"
+//
+// Authorization primitives (evaluate, verify_permit) are intentionally
+// excluded — they must always be callable to bootstrap the flow.
+// ---------------------------------------------------------------------------
+async function agentToolGate(
+  toolName: string,
+  actorId: string,
+  environment: string,
+): Promise<import("./decision.js").Decision | null> {
+  const ctx: ActionContext = {
+    action_type: "model.agent.execute_tool",
+    actor_id: actorId,
+    environment,
+    tool_name: toolName,
+  };
+  const gate = await authorize(ctx);
+  if (gate.decision !== "allow") {
+    log("agent_tool_gate.blocked", { tool: toolName, actor: actorId, gate });
+    return gate;
+  }
+  return null;
+}
+
 // Per-tool token bucket. Caps the calls-per-second any single tool
 // handler can sustain — protects the upstream policy engine from a
 // runaway agent loop, and the local mode from busywork. Tunable via
@@ -392,6 +421,11 @@ export function createServer(): McpServer {
         log("deploy_service.rate_limited", { decision });
         return toolResult(decision);
       }
+
+      // Agent tool gate: check model.agent.execute_tool before deploy-specific authorization.
+      const agentGate = await agentToolGate("deploy_service", args.actor_id, args.environment);
+      if (agentGate !== null) return toolResult(agentGate);
+
       const ctx: ActionContext = {
         action_type: "production.deploy",
         actor_id: args.actor_id,
