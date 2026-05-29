@@ -245,6 +245,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   const context: Record<string, unknown> = { environment: ctx.environment };
   if (ctx.approvals !== undefined) context.approvals = ctx.approvals;
   if (ctx.change_window !== undefined) context.change_window = ctx.change_window;
+  if (ctx.tool_name !== undefined) context.tool_name = ctx.tool_name;
 
   const body: Record<string, unknown> = {
     action_type: ctx.action_type,

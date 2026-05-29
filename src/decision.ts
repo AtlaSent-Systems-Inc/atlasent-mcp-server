@@ -11,6 +11,7 @@ export type ActionContext = {
   environment: string;
   approvals?: string[];
   change_window?: string;
+  tool_name?: string;
 };
 
 export type AllowDecision = {
