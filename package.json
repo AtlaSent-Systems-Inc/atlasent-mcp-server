@@ -19,7 +19,7 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/server.test.ts src/v2Client.test.ts src/v2Tools.test.ts src/complianceTools.test.ts src/streamableHttp.integration.test.ts",
+    "test": "node --import tsx --test src/server.test.ts src/v2Client.test.ts src/v2Tools.test.ts src/complianceTools.test.ts src/streamableHttp.integration.test.ts src/trajectoryVerify.test.ts",
     "test:integration": "node --import tsx --test src/integration.test.ts src/integration.write.test.ts",
     "demo": "node examples/demo.mjs"
   },

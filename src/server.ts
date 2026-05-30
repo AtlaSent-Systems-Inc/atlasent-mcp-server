@@ -37,6 +37,7 @@ import {
 } from "./engine.js";
 import { registerV2Tools } from "./v2Tools.js";
 import { registerComplianceTools } from "./complianceTools.js";
+import { trajectoryVerify } from "./trajectoryVerify.js";
 
 export const VERSION = "2.11.0";
 
@@ -1443,6 +1444,89 @@ export function createServer(): McpServer {
       },
     );
   }
+
+  // -------------------------------------------------------------------------
+  // atlasent_trajectory_verify — verify that the current execution step is
+  // on an authorized trajectory (POST /v1/trajectory-verify).
+  //
+  // Fail-closed: any error surfaces as on_trajectory=false with isError=true.
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "atlasent_trajectory_verify",
+    {
+      title: "AtlaSent — Trajectory Verify",
+      description:
+        "Verify that the agent's current execution step is on an authorized " +
+        "trajectory. Call this at each step to ensure the agent has not deviated " +
+        "from the permitted plan. Returns on_trajectory=true to continue or " +
+        "on_trajectory=false (with a deviation reason) to halt. Fail-closed: " +
+        "network errors return on_trajectory=false.",
+      inputSchema: z.object({
+        permit_token: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("The permit_token from a prior evaluate call that authorized this trajectory."),
+        current_step: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("The current execution step the agent is about to perform."),
+        completed_steps: z
+          .array(z.string().min(1).max(MAX_FIELD_LEN))
+          .optional()
+          .describe("Steps already completed in this trajectory, in execution order."),
+        execution_context: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe("Additional context about the current execution environment."),
+      }),
+      annotations: {
+        title: "AtlaSent — Trajectory Verify",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_trajectory_verify")) {
+        const result = {
+          on_trajectory: false,
+          trajectory_complete: false,
+          verified_at: new Date().toISOString(),
+          deviation: { reason: "MCP tool rate limit exceeded — slow down and retry" },
+        };
+        log("atlasent_trajectory_verify.rate_limited", { result });
+        return { ...toolResult(result), isError: true as const };
+      }
+
+      const apiKey = process.env.ATLASENT_API_KEY ?? "";
+      const baseUrl = process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.io";
+
+      log("atlasent_trajectory_verify", {
+        permit_token: args.permit_token,
+        current_step: args.current_step,
+      });
+
+      const result = await trajectoryVerify({
+        apiKey,
+        baseUrl,
+        permitToken: args.permit_token,
+        currentStep: args.current_step,
+        ...(args.completed_steps !== undefined ? { completedSteps: args.completed_steps } : {}),
+        ...(args.execution_context !== undefined ? { executionContext: args.execution_context } : {}),
+      });
+
+      if (!result.on_trajectory) {
+        return {
+          ...toolResult({ on_trajectory: false, deviation: result.deviation, halt: true }),
+          isError: true as const,
+        };
+      }
+
+      return toolResult(result as unknown as Record<string, unknown>);
+    },
+  );
 
   // -------------------------------------------------------------------------
   // V2 Wave B tools — atlasent_evaluate_many, atlasent_evaluate_stream,
