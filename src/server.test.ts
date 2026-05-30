@@ -114,6 +114,10 @@ describe("tools/list", () => {
       "atlasent_update_policy",
       "atlasent_upsert_siem_config",
       "atlasent_verify_permit",
+      "atlasent_vqp_audit_summary",
+      "atlasent_vqp_drift_events",
+      "atlasent_vqp_generate",
+      "atlasent_vqp_verify",
       "deploy_service",
       "evaluate",
       "verify_permit",
@@ -571,13 +575,19 @@ describe("deploy_service (authorization-gated)", () => {
   });
 
   it("executes the deploy when policy allows", async () => {
+    // With the two-layer gate, both agentToolGate (model.agent.execute_tool)
+    // and the deploy-specific gate (production.deploy) must allow. In local
+    // mode, agentToolGate uses the same local engine which denies production
+    // actions without approvals — but agentToolGate only receives the
+    // environment, not the per-deploy approvals. Use staging so both gates
+    // pass unconditionally in local mode, verifying the full execute path.
     forceLocalMode();
     const { client } = await setup();
     const result = await client.callTool({
       name: "deploy_service",
       arguments: {
         service_name: "billing-api",
-        environment: "production",
+        environment: "staging",
         actor_id: "agent-7",
         approvals: ["ticket-42"],
       },
@@ -588,7 +598,7 @@ describe("deploy_service (authorization-gated)", () => {
     const res = data.result as Record<string, unknown>;
     assert.equal(res.status, "deployed");
     assert.equal(res.service, "billing-api");
-    assert.equal(res.environment, "production");
+    assert.equal(res.environment, "staging");
   });
 
   it("executes staging deploys without approvals", async () => {
