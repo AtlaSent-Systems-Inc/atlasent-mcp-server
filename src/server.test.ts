@@ -110,6 +110,7 @@ describe("tools/list", () => {
       "atlasent_resolve_approval_request",
       "atlasent_revoke_permit",
       "atlasent_test_siem_delivery",
+      "atlasent_trajectory_verify",
       "atlasent_update_policy",
       "atlasent_upsert_siem_config",
       "atlasent_verify_permit",
@@ -1475,5 +1476,59 @@ describe("atlasent_evaluate explain + risk_envelope", () => {
     assert.ok(envelope, "risk_envelope must be present");
     assert.equal(envelope.weighted_score, 0.45);
     assert.equal(envelope.factors, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_trajectory_verify
+// ---------------------------------------------------------------------------
+
+describe("atlasent_trajectory_verify", () => {
+  it("returns on_trajectory=true and no isError on a 200 success response", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      on_trajectory: true,
+      trajectory_position: 2,
+      trajectory_complete: false,
+      verified_at: "2026-05-30T10:00:00.000Z",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_trajectory_verify",
+      arguments: {
+        permit_token: "pt_traj_abc",
+        current_step: "fetch_customer_records",
+        completed_steps: ["validate_inputs"],
+        execution_context: { session_id: "sess_1" },
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.on_trajectory, true);
+    assert.equal(data.trajectory_position, 2);
+    assert.equal(data.trajectory_complete, false);
+    assert.equal(result.isError, undefined);
+  });
+
+  it("returns on_trajectory=false and isError=true when the API signals a deviation", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      on_trajectory: false,
+      trajectory_complete: false,
+      verified_at: "2026-05-30T10:00:01.000Z",
+      deviation: { reason: "step not in approved plan", trajectory_id: "traj_999" },
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_trajectory_verify",
+      arguments: {
+        permit_token: "pt_traj_abc",
+        current_step: "drop_database",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.on_trajectory, false);
+    assert.ok(data.deviation, "deviation must be present");
+    assert.equal(data.halt, true);
+    assert.equal(result.isError, true);
   });
 });
