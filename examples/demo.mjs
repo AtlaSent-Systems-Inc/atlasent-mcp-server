@@ -3,11 +3,21 @@
  * End-to-end demo: authorization-before-tool-execution.
  *
  * Spawns the MCP server as a child process, connects an MCP client to it over
- * stdio, and drives the full flow for a protected tool (deploy_service):
+ * stdio, and drives the full flow for two use cases:
  *
- *   1. Agent attempts deploy_service (prod, no approvals)   → DENIED, blocked
- *   2. Agent attempts deploy_service (prod, with approvals) → ALLOWED, executes
- *   3. Agent calls verify_permit on the permit_token        → VERIFIED
+ * Deploy gate (CI/CD):
+ *   A. Agent attempts deploy_service (prod, no approvals)   → DENIED, blocked
+ *   B. Agent attempts deploy_service (prod, with approvals) → ALLOWED, executes
+ *   C. Agent calls verify_permit on the permit_token        → VERIFIED
+ *
+ * Agent tool call governance (MCP / AI-native):
+ *   D. Agent evaluates agent.db.delete (no change window)   → HOLD, blocked
+ *   E. Agent evaluates agent.search.web (safe read)         → ALLOWED, verified
+ *
+ * AtlaSent governs any action_type — not just deploys. The same evaluate →
+ * permit → verify flow that gates CI/CD pipelines also gates your agent's
+ * database writes, web searches, and external API calls. Define the actions
+ * that matter for your use case; the policy engine handles the rest.
  *
  * Run with:
  *   npm run build
@@ -167,13 +177,107 @@ async function main() {
   }
 
   // -----------------------------------------------------------------------
+  // Scenario D — Agent tool call governance: destructive action held for review
+  // -----------------------------------------------------------------------
+  section("Scenario D: agent tool governance — db.delete without a change window");
+
+  step(1, "Agent calls evaluate before running agent.db.delete");
+  show("request", {
+    action_type: "agent.db.delete",
+    actor_id: "agent:data-pipeline",
+    environment: "development",
+  });
+
+  const dbDelete = await client.callTool({
+    name: "evaluate",
+    arguments: {
+      action_type: "agent.db.delete",
+      actor_id: "agent:data-pipeline",
+      environment: "development",
+    },
+  });
+  const dbDeleteDecision = parse(dbDelete);
+
+  step(2, "MCP intercepts → calls authorize(ctx) → policy engine decides");
+  show("decision", dbDeleteDecision);
+
+  step(3, "Tool execution HELD — awaiting human review");
+  if (dbDeleteDecision.decision === "hold") {
+    console.log("    ✓ database delete did NOT run. Queued for human review.");
+    console.log(`    ✓ reason: ${dbDeleteDecision.reason ?? dbDeleteDecision.reasons?.[0]}`);
+  } else {
+    console.log(`    ! decision was ${dbDeleteDecision.decision} (local policy may differ)`);
+  }
+
+  // -----------------------------------------------------------------------
+  // Scenario E — Agent tool call governance: safe read action proceeds
+  // -----------------------------------------------------------------------
+  section("Scenario E: agent tool governance — web search proceeds");
+
+  step(1, "Agent calls evaluate before running agent.search.web");
+  show("request", {
+    action_type: "agent.search.web",
+    actor_id: "agent:research-bot",
+    environment: "development",
+  });
+
+  const webSearch = await client.callTool({
+    name: "evaluate",
+    arguments: {
+      action_type: "agent.search.web",
+      actor_id: "agent:research-bot",
+      environment: "development",
+    },
+  });
+  const webSearchDecision = parse(webSearch);
+
+  step(2, "MCP intercepts → calls authorize(ctx) → policy engine decides");
+  show("decision", {
+    decision: webSearchDecision.decision,
+    permit_token: webSearchDecision.permit_token,
+    audit_id: webSearchDecision.audit_id,
+  });
+
+  if (webSearchDecision.decision !== "allow") {
+    console.log(`    ! expected allow but got ${webSearchDecision.decision}. Demo premise failed.`);
+    process.exit(1);
+  }
+
+  step(3, "Tool execution PROCEEDS — agent searches the web");
+  console.log("    ✓ web search authorized.");
+
+  step(4, "Agent calls verify_permit to close the audit loop");
+  const webVerified = await client.callTool({
+    name: "verify_permit",
+    arguments: {
+      permit_token: webSearchDecision.permit_token,
+      action_type: "agent.search.web",
+      actor_id: "agent:research-bot",
+      environment: "development",
+    },
+  });
+  const webVerifyResult = parse(webVerified);
+  show("result", webVerifyResult);
+  if (webVerifyResult.valid) {
+    console.log("    ✓ permit verified. Audit loop closed.");
+  } else {
+    console.log(`    ✗ permit not valid: ${webVerifyResult.reason}`);
+  }
+
+  // -----------------------------------------------------------------------
   section("Summary");
   console.log(
     [
-      `  A. unauthorized deploy: BLOCKED (${blockedDecision.decision})`,
-      `  B. authorized deploy:   EXECUTED (${allowedDecision.decision}, service=${allowedDecision.result.service})`,
-      `  C. verify_permit:       ${verifyResult.outcome} (valid=${verifyResult.valid})`,
+      `  A. unauthorized deploy:    BLOCKED (${blockedDecision.decision})`,
+      `  B. authorized deploy:      EXECUTED (${allowedDecision.decision}, service=${allowedDecision.result.service})`,
+      `  C. verify_permit (deploy): ${verifyResult.outcome} (valid=${verifyResult.valid})`,
+      `  D. agent db.delete (hold): ${dbDeleteDecision.decision}`,
+      `  E. agent web.search:       EXECUTED (${webSearchDecision.decision}), permit ${webVerifyResult.outcome}`,
     ].join("\n"),
+  );
+  console.log(
+    "\n  AtlaSent governs any action_type — deploy gates, database writes,\n" +
+    "  web searches, external API calls, or any action your agent performs.\n",
   );
 
   await client.close();

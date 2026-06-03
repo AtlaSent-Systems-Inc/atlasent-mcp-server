@@ -16,8 +16,9 @@ npm run build
 npm run demo
 ```
 
-You'll see three scenarios run end-to-end:
+You'll see five scenarios run end-to-end — two use cases in one demo:
 
+**Deploy gate (CI/CD pipelines):**
 ```
 Scenario A: agent attempts unauthorized deploy (prod, no approvals)
     [1] Agent calls deploy_service
@@ -27,14 +28,29 @@ Scenario A: agent attempts unauthorized deploy (prod, no approvals)
         ✓ reason: Production action 'production.deploy' requires at least one approval...
 
 Scenario B: agent attempts authorized deploy (prod, with approval)
-    [1] Agent calls deploy_service with approval
-    [2] MCP intercepts → calls authorize(ctx) → policy engine decides
     [3] Tool execution PROCEEDS
         result: {"status":"deployed","service":"billing-api",...}
 
-Scenario C: close the audit loop with verify_permit
+Scenario C: verify_permit closes the audit loop
     result: {"outcome":"verified","valid":true,...}
 ```
+
+**Agent tool call governance (MCP / AI-native builders):**
+```
+Scenario D: agent evaluates agent.db.delete without a change window
+    [1] Agent calls evaluate before running agent.db.delete
+    [3] Tool execution HELD — awaiting human review
+        ✓ database delete did NOT run. Queued for human review.
+
+Scenario E: agent evaluates agent.search.web (safe read)
+    [3] Tool execution PROCEEDS — agent searches the web
+        ✓ web search authorized.
+    [4] verify_permit closes the audit loop: {"outcome":"verified","valid":true}
+```
+
+AtlaSent governs any `action_type` — not just deploys. The same evaluate →
+permit → verify flow that gates CI/CD pipelines also governs your agent's
+database writes, web searches, and external API calls.
 
 The demo uses `local` mode (no API key needed). To run the same demo against the hosted AtlaSent backend once your API key is issued:
 
@@ -47,6 +63,57 @@ ATLASENT_MODE=remote \
 ```
 
 `ATLASENT_MCP_READONLY=1` is **recommended for any live-API demo** — see [Read-only mode](#read-only-mode-for-live-demos) below.
+
+## Agent tool call governance
+
+AtlaSent is not a deploy gate product. It is execution-time authorization infrastructure. The `action_type` field is yours to define — any string your agent platform uses to name a tool invocation becomes a protected action.
+
+**Common agent action types:**
+
+```ts
+// Database mutations
+"agent.db.write"         // INSERT / UPDATE
+"agent.db.delete"        // DELETE / TRUNCATE (destructive — triggers hold)
+
+// External network calls
+"agent.search.web"       // Read-only web search
+"agent.api.post"         // Outbound POST to an external service
+
+// File system
+"agent.fs.write"         // Write or overwrite a file
+"agent.fs.delete"        // Delete a file
+
+// Code execution
+"agent.code.execute"     // Run user-supplied code
+```
+
+**Pattern — agent evaluates before every sensitive tool call:**
+
+```ts
+// Before running a tool, the agent calls evaluate
+const ctx = {
+  action_type: "agent.db.delete",   // your action namespace
+  actor_id: "agent:data-pipeline",   // which agent is acting
+  environment: "production",
+  // any context your policies need
+};
+
+const decision = await authorize(ctx);   // interception point
+if (decision.decision !== "allow") {
+  // Tell the LLM the tool was blocked and why
+  return `Tool blocked: ${decision.reason}`;
+}
+
+// Run the tool
+const result = await runDatabaseDelete(ctx);
+
+// Close the audit loop
+await verify(decision.permit_token, ctx);
+```
+
+If you are using **LangChain**, the `@atlasent/guard` package wraps this pattern as a one-liner decorator — see [atlasent-sdk](https://github.com/AtlaSent-Systems-Inc/atlasent-sdk).
+
+If you are building your own MCP server with protected tools, copy the `deploy_service` handler in `src/server.ts` — it is the canonical 20-line interception pattern. Wire `atlasent_evaluate` before any tool that writes, deletes, calls external APIs, or runs code.
 
 ## Tools
 
