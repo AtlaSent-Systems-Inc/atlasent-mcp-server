@@ -317,6 +317,8 @@ describe("evaluate (remote mode)", () => {
       approvals: ["t-1"],
       change_window: "win-1",
     });
+    // state_snapshot must be a top-level field (not inside context).
+    assert.deepEqual(body.state_snapshot, { source: "atlasent-mcp", complete: true });
     // No top-level `environment` — handler.ts derives it from the API key.
     assert.equal(body.environment, undefined);
   });
