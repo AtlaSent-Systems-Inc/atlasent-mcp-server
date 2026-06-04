@@ -367,6 +367,7 @@ export interface EvaluateParams {
   org_id: string;
   context?: Record<string, unknown>;
   explain?: boolean;
+  state_snapshot?: Record<string, unknown>;
 }
 
 export interface EvaluateResponse {
@@ -388,6 +389,7 @@ export async function evaluateAction(params: EvaluateParams): Promise<EvaluateRe
   };
   if (params.context !== undefined) body.context = params.context;
   if (params.explain !== undefined) body.explain = params.explain;
+  body.state_snapshot = params.state_snapshot ?? { source: "atlasent-mcp", complete: true };
   return post<EvaluateResponse>("/v1-evaluate", body);
 }
 
