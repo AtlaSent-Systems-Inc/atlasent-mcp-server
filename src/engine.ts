@@ -251,6 +251,9 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     action_type: ctx.action_type,
     actor_id: ctx.actor_id,
     context,
+    // state_snapshot is a top-level EvaluateBody field required when
+    // requires_state_snapshot=true (all classes since backfill 20260603000019).
+    state_snapshot: ctx.state_snapshot ?? { source: "atlasent-mcp", complete: true },
   };
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
@@ -364,6 +367,7 @@ export interface EvaluateParams {
   org_id: string;
   context?: Record<string, unknown>;
   explain?: boolean;
+  state_snapshot?: Record<string, unknown>;
 }
 
 export interface EvaluateResponse {
@@ -385,6 +389,7 @@ export async function evaluateAction(params: EvaluateParams): Promise<EvaluateRe
   };
   if (params.context !== undefined) body.context = params.context;
   if (params.explain !== undefined) body.explain = params.explain;
+  body.state_snapshot = params.state_snapshot ?? { source: "atlasent-mcp", complete: true };
   return post<EvaluateResponse>("/v1-evaluate", body);
 }
 

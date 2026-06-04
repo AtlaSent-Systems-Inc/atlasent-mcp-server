@@ -12,6 +12,7 @@ export type ActionContext = {
   approvals?: string[];
   change_window?: string;
   tool_name?: string;
+  state_snapshot?: Record<string, unknown>;
 };
 
 export type AllowDecision = {
