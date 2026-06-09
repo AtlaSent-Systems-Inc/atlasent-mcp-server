@@ -11,11 +11,11 @@ jobs:
     environment: npm
     permissions:
       contents: read
-      id-token: write   # npm provenance + cosign keyless OIDC
+      id-token: write   # cosign keyless OIDC
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -48,17 +48,18 @@ jobs:
           echo "PKG=$PKG" >> "$GITHUB_ENV"
 
       - name: Sign tarball (cosign keyless)
-        # R4 keyless: OIDC short-lived cert via Sigstore Fulcio.
-        # No private key stored in secrets.
+        # Keyless OIDC cert via Sigstore Fulcio — no private key in secrets.
         run: cosign sign-blob --yes --bundle="${PKG}.bundle" "${PKG}"
 
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        # --provenance requires a public source repo; this repo is private.
+        # cosign signing above covers supply-chain attestation.
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Upload bundle artifact
-        uses: actions/upload-artifact@v7
+      - name: Upload cosign bundle artifact
+        uses: actions/upload-artifact@v4
         with:
           name: cosign-bundle
           path: "*.bundle"
