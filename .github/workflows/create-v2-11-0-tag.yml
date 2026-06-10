@@ -1,0 +1,27 @@
+name: Tag and publish v2.11.0
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify package.json version is 2.11.0
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          [ "$PKG" = "2.11.0" ] || (echo "Expected 2.11.0, got $PKG" && exit 1)
+
+      - name: Create v2.11.0 tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git push origin c3b2add06cbcf3e4cfcee9cd10de0e763c30b557:refs/tags/v2.11.0
