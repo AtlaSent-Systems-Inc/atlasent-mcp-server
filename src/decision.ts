@@ -26,11 +26,11 @@ export type AllowDecision = {
 export type DenyDecision = {
   decision: "deny";
   reasons: string[];
-  /** Stable machine code from the API denial (e.g. "HUMAN_APPROVAL_REQUIRED"). */
+  /** Stable machine code from the API denial (e.g. "INSUFFICIENT_APPROVALS"). */
   deny_code?: string;
   /**
    * Set when the denial is resolvable by a human approval
-   * (`deny_code === "HUMAN_APPROVAL_REQUIRED"`). A host can route the action
+   * (`deny_code === "INSUFFICIENT_APPROVALS"`). A host can route the action
    * to a person / approval queue (e.g. the `create_approval_request` tool)
    * rather than treating it as a terminal refusal. The action still does not
    * execute now — fail-closed is preserved.

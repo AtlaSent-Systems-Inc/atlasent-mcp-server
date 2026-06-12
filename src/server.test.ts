@@ -292,18 +292,18 @@ describe("evaluate (remote mode)", () => {
     assert.equal(result.isError, true);
   });
 
-  it("surfaces deny_code and flags HUMAN_APPROVAL_REQUIRED for human routing", async () => {
+  it("surfaces deny_code and flags INSUFFICIENT_APPROVALS for human routing", async () => {
     forceRemoteMode();
     globalThis.fetch = mockFetch({
       decision: "deny",
-      denial: { reasons: ["a human must approve this action class"], code: "HUMAN_APPROVAL_REQUIRED" },
+      denial: { reasons: ["a human must approve this action class"], code: "INSUFFICIENT_APPROVALS" },
       request_id: "req_hil",
     });
     const { client } = await setup();
     const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
     const data = parseResult(result);
     assert.equal(data.decision, "deny");
-    assert.equal(data.deny_code, "HUMAN_APPROVAL_REQUIRED");
+    assert.equal(data.deny_code, "INSUFFICIENT_APPROVALS");
     assert.equal(data.requires_human_approval, true);
     // Fail-closed is preserved — a deny is still an error envelope.
     assert.equal(result.isError, true);

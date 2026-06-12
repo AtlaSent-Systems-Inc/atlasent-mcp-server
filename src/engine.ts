@@ -290,10 +290,12 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     decision: "deny",
     reasons,
     ...(deny_code && { deny_code }),
-    // A human-approval gate is not a terminal refusal — flag it so the host
-    // can route to a person (e.g. create_approval_request) instead of giving
-    // up. The action still does not run now (fail-closed preserved).
-    ...(deny_code === "HUMAN_APPROVAL_REQUIRED" && { requires_human_approval: true }),
+    // An insufficient-approvals denial is not a terminal refusal — a human can
+    // approve. Flag it so the host routes to a person (e.g.
+    // create_approval_request) instead of giving up. The action still does not
+    // run now (fail-closed preserved). INSUFFICIENT_APPROVALS is the frozen
+    // deny code the per-class human-in-the-loop gate emits.
+    ...(deny_code === "INSUFFICIENT_APPROVALS" && { requires_human_approval: true }),
     ...(audit_id && { audit_id }),
     ...(envelope_hash && { envelope_hash }),
   };
