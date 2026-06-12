@@ -276,6 +276,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     return {
       decision: "hold",
       reasons,
+      ...(data.denial?.code && { deny_code: data.denial.code }),
       ...(data.hold_id && { hold_id: data.hold_id }),
       ...(audit_id && { audit_id }),
       ...(envelope_hash && { envelope_hash }),
@@ -284,12 +285,21 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
 
   // Anything else (including "deny" or an unknown decision) is fail-closed.
   const reasons = data.denial?.reasons ?? data.reasons ?? [`Denied (decision=${data.decision})`];
-  return {
+  const deny_code = data.denial?.code;
+  const out: Decision = {
     decision: "deny",
     reasons,
+    ...(deny_code && { deny_code }),
+    // An insufficient-approvals denial is not a terminal refusal — a human can
+    // approve. Flag it so the host routes to a person (e.g.
+    // create_approval_request) instead of giving up. The action still does not
+    // run now (fail-closed preserved). INSUFFICIENT_APPROVALS is the frozen
+    // deny code the per-class human-in-the-loop gate emits.
+    ...(deny_code === "INSUFFICIENT_APPROVALS" && { requires_human_approval: true }),
     ...(audit_id && { audit_id }),
     ...(envelope_hash && { envelope_hash }),
   };
+  return out;
 }
 
 // Canonical verify-permit response shape (v1-verify-permit/handler.ts):
