@@ -26,6 +26,16 @@ export type AllowDecision = {
 export type DenyDecision = {
   decision: "deny";
   reasons: string[];
+  /** Stable machine code from the API denial (e.g. "HUMAN_APPROVAL_REQUIRED"). */
+  deny_code?: string;
+  /**
+   * Set when the denial is resolvable by a human approval
+   * (`deny_code === "HUMAN_APPROVAL_REQUIRED"`). A host can route the action
+   * to a person / approval queue (e.g. the `create_approval_request` tool)
+   * rather than treating it as a terminal refusal. The action still does not
+   * execute now — fail-closed is preserved.
+   */
+  requires_human_approval?: boolean;
   audit_id?: string;
   envelope_hash?: string;
 };
@@ -33,6 +43,8 @@ export type DenyDecision = {
 export type HoldDecision = {
   decision: "hold";
   reasons: string[];
+  /** Stable machine code from the API denial, when present. */
+  deny_code?: string;
   hold_id?: string;
   audit_id?: string;
   envelope_hash?: string;
