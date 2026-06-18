@@ -6,6 +6,8 @@ An MCP server that plugs into any [Model Context Protocol](https://modelcontextp
 
 Ships with a local rules engine so you can run the full evaluate → act → verify flow in under a minute, with zero credentials. The hosted AtlaSent backend is a configuration swap, not a rewrite.
 
+When an agent "gets stamped" before acting — a human submits, approves, or stamps the prepared work — that stamp is an authorization event. AtlaSent turns it into a permit you verify before execution. Human approval is one source of authority; a policy rule, a deployment gate, or a risk-engine decision are others. Every source produces the same thing: a verifiable permit.
+
 ## Run the demo in 60 seconds
 
 ```bash
