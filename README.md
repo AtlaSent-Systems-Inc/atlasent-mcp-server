@@ -59,10 +59,15 @@ The demo uses `local` mode (no API key needed). To run the same demo against the
 ```bash
 ATLASENT_MODE=remote \
   ATLASENT_API_KEY=ask_live_xxx \
-  ATLASENT_BASE_URL=https://api.atlasent.io \
+  ATLASENT_BASE_URL=https://<project-ref>.supabase.co/functions/v1 \
   ATLASENT_MCP_READONLY=1 \
   npm run demo
 ```
+
+> **`ATLASENT_BASE_URL` must end in `/functions/v1`** — e.g.
+> `https://<project-ref>.supabase.co/functions/v1`. The `api.atlasent.io` apex
+> 404s unless a custom domain is verified for your tenant, so set this
+> explicitly; a wrong/absent base URL makes every evaluate fail closed (deny).
 
 `ATLASENT_MCP_READONLY=1` is **recommended for any live-API demo** — see [Read-only mode](#read-only-mode-for-live-demos) below.
 
@@ -422,7 +427,7 @@ The engine behind `authorize()` is pluggable. The same tool handlers work in bot
 |---|---|---|---|
 | `ATLASENT_MODE` | no | auto-detect | Force `local` or `remote` |
 | `ATLASENT_API_KEY` | remote only | — | Bearer token for the hosted API (prefix: `ask_live_` / `ask_test_`) |
-| `ATLASENT_BASE_URL` | remote only | `https://api.atlasent.io` | Hosted API base URL |
+| `ATLASENT_BASE_URL` | remote only | `https://api.atlasent.io` | Hosted API base URL. **Set this to your runtime base ending in `/functions/v1`** (e.g. `https://<project-ref>.supabase.co/functions/v1`). The `api.atlasent.io` default 404s unless a custom domain is verified for your tenant — leaving it unset makes every remote evaluate fail closed. |
 | `ATLASENT_ANON_KEY` | no | — | Optional `x-anon-key` header |
 | `ATLASENT_MCP_RATE_LIMIT` | no | `600` | Per-tool calls per minute (token bucket) |
 | `ATLASENT_MCP_READONLY` | no | (unset) | If `1` or `true`, skip registration of the 7 mutating tools. **Recommended for live-API demos.** See [Read-only mode](#read-only-mode-for-live-demos). |
@@ -462,7 +467,7 @@ On startup, the server emits a `server.readonly_mode` structured log line to std
       "env": {
         "ATLASENT_MODE": "remote",
         "ATLASENT_API_KEY": "ask_live_xxxxxxxxxxxxxxxx",
-        "ATLASENT_BASE_URL": "https://api.atlasent.io",
+        "ATLASENT_BASE_URL": "https://<project-ref>.supabase.co/functions/v1",
         "ATLASENT_MCP_READONLY": "1"
       }
     }
@@ -483,6 +488,7 @@ Add to `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json` globally
 ```bash
 claude mcp add atlasent -- npx -y @atlasent/mcp-server
 export ATLASENT_API_KEY=ask_live_xxxxxxxxxxxxxxxx
+export ATLASENT_BASE_URL=https://<project-ref>.supabase.co/functions/v1  # must end in /functions/v1; apex 404s
 export ATLASENT_MCP_READONLY=1   # safe default; unset for ops sessions
 ```
 
