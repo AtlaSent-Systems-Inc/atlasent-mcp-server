@@ -9,7 +9,8 @@
       "args": ["-y", "@atlasent/mcp-server"],
       "env": {
         "ATLASENT_API_KEY": "<your-atlasent-api-key>",
-        "ATLASENT_BASE_URL": "https://api.atlasent.io",
+        "_base_url_note": "Use your runtime base ending in /functions/v1, e.g. https://<project-ref>.supabase.co/functions/v1. The api.atlasent.io apex 404s unless a custom domain is verified for your tenant.",
+        "ATLASENT_BASE_URL": "https://<project-ref>.supabase.co/functions/v1",
         "ATLASENT_MODE": "remote"
       }
     },
@@ -32,7 +33,8 @@
         "ATLASENT_TRANSPORT": "http",
         "PORT": "3000",
         "ATLASENT_API_KEY": "<your-atlasent-api-key>",
-        "ATLASENT_BASE_URL": "https://api.atlasent.io",
+        "_base_url_note": "Use your runtime base ending in /functions/v1, e.g. https://<project-ref>.supabase.co/functions/v1. The api.atlasent.io apex 404s unless a custom domain is verified for your tenant.",
+        "ATLASENT_BASE_URL": "https://<project-ref>.supabase.co/functions/v1",
         "ATLASENT_MODE": "remote"
       }
     }
