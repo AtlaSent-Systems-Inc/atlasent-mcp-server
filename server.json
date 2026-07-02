@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.atlasent-systems-inc/mcp-server",
+  "title": "AtlaSent MCP Server",
+  "description": "Enforce authorize-before-execute for any MCP-compatible AI agent. Wraps AtlaSent's signed-permit evaluation and verify-permit API as MCP tools — the only L4 Execution Assurance layer for AI agents.",
+  "version": "2.11.0",
+  "websiteUrl": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server",
+  "repository": {
+    "url": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@atlasent/mcp-server",
+      "version": "2.11.0",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "ATLASENT_API_KEY",
+          "description": "AtlaSent API key (from your AtlaSent dashboard). Leave blank to run in local mode.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "ATLASENT_BASE_URL",
+          "description": "AtlaSent API base URL. Defaults to the hosted SaaS endpoint.",
+          "isRequired": false
+        },
+        {
+          "name": "ATLASENT_MODE",
+          "description": "remote (default when API key + base URL set) or local (in-process rules engine, no API calls)",
+          "isRequired": false,
+          "choices": ["remote", "local"]
+        }
+      ]
+    }
+  ]
+}

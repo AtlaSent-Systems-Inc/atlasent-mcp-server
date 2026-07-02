@@ -1,0 +1,29 @@
+# Smithery configuration — https://smithery.ai/docs/build/project-config/smithery.yaml
+
+startCommand:
+  type: stdio
+
+configSchema:
+  type: object
+  properties:
+    apiKey:
+      type: string
+      description: "AtlaSent API key (from your AtlaSent dashboard). Leave blank to run in local mode."
+    baseUrl:
+      type: string
+      description: "AtlaSent API base URL."
+    mode:
+      type: string
+      description: "remote (default when apiKey is set) or local (in-process rules engine, no API calls)"
+      enum: ["remote", "local"]
+
+commandFunction: |-
+  (config) => ({
+    command: 'npx',
+    args: ['-y', '@atlasent/mcp-server'],
+    env: {
+      ...(config.apiKey ? { ATLASENT_API_KEY: config.apiKey } : {}),
+      ...(config.baseUrl ? { ATLASENT_BASE_URL: config.baseUrl } : {}),
+      ...(config.mode ? { ATLASENT_MODE: config.mode } : {})
+    }
+  })
