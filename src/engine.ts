@@ -48,6 +48,7 @@ export type Mode = "local" | "remote";
 // per process. getMode() is called on every authorize/verify, so without
 // this gate the warning would flood stderr.
 let LOCAL_MODE_WARNING_EMITTED = false;
+let BASE_URL_WARNING_EMITTED = false;
 
 function emitLocalModeWarning(): void {
   if (LOCAL_MODE_WARNING_EMITTED) return;
@@ -66,6 +67,24 @@ function emitLocalModeWarning(): void {
       "See SECURITY.md § 'Maturity classification' for details. " +
       "Set ATLASENT_SUPPRESS_LOCAL_MODE_WARNING=true to silence this warning " +
       "in dev/CI scripts.",
+  );
+}
+
+function emitBaseUrlWarning(): void {
+  if (BASE_URL_WARNING_EMITTED) return;
+  if (process.env.NODE_ENV === "test") return;
+  if (process.env.ATLASENT_SUPPRESS_BASE_URL_WARNING === "true") return;
+  const url = process.env.ATLASENT_BASE_URL ?? "";
+  if (url.includes("/functions/v1")) return;
+  BASE_URL_WARNING_EMITTED = true;
+  // eslint-disable-next-line no-console
+  console.error(
+    "[atlasent-mcp-server] WARNING: ATLASENT_BASE_URL does not contain '/functions/v1'. " +
+      "For Supabase-hosted AtlaSent instances ATLASENT_BASE_URL must end in /functions/v1 " +
+      "(e.g. https://<project-ref>.supabase.co/functions/v1). " +
+      "Without this suffix every API call will 404. " +
+      "See README §'Remote mode (hosted API)' for details. " +
+      "Set ATLASENT_SUPPRESS_BASE_URL_WARNING=true to silence this warning.",
   );
 }
 
@@ -110,6 +129,13 @@ export function getMode(): Mode {
     emitLocalModeWarning();
   }
 
+  // Emit a one-time startup warning in remote mode when ATLASENT_BASE_URL
+  // doesn't contain /functions/v1. Without the suffix every API call
+  // returns 404 on Supabase-hosted instances.
+  if (requested === "remote") {
+    emitBaseUrlWarning();
+  }
+
   return requested;
 }
 
@@ -151,7 +177,7 @@ function buildHeaders(): Record<string, string> {
 }
 
 function baseUrl(): string {
-  return (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.io").replace(/\/+$/, "");
+  return (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.io/functions/v1").replace(/\/+$/, "");
 }
 
 function handleHttpError(status: number, body: string): never {
