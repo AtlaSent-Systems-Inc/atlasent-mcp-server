@@ -277,10 +277,11 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     action_type: ctx.action_type,
     actor_id: ctx.actor_id,
     context,
-    // state_snapshot is a top-level EvaluateBody field required when
-    // requires_state_snapshot=true (all classes since backfill 20260603000019).
-    state_snapshot: ctx.state_snapshot ?? { source: "atlasent-mcp", complete: true },
   };
+  // state_snapshot is a top-level EvaluateBody field required when
+  // requires_state_snapshot=true (all classes since backfill 20260603000019).
+  // Omit when not supplied — the API will return SNAPSHOT_REQUIRED (fail-closed).
+  if (ctx.state_snapshot !== undefined) body.state_snapshot = ctx.state_snapshot;
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
 
@@ -425,7 +426,7 @@ export async function evaluateAction(params: EvaluateParams): Promise<EvaluateRe
   };
   if (params.context !== undefined) body.context = params.context;
   if (params.explain !== undefined) body.explain = params.explain;
-  body.state_snapshot = params.state_snapshot ?? { source: "atlasent-mcp", complete: true };
+  if (params.state_snapshot !== undefined) body.state_snapshot = params.state_snapshot;
   return post<EvaluateResponse>("/v1-evaluate", body);
 }
 
