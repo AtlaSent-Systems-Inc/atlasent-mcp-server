@@ -39,6 +39,7 @@ import { registerV2Tools } from "./v2Tools.js";
 import { registerComplianceTools } from "./complianceTools.js";
 import { registerVqpTools } from "./vqpTools.js";
 import { trajectoryVerify } from "./trajectoryVerify.js";
+import { CANON_ACT_CATALOG } from "./canonCatalog.js";
 
 export const VERSION = "2.11.0";
 
@@ -1563,6 +1564,86 @@ export function createServer(): McpServer {
       }
 
       return toolResult(result as unknown as Record<string, unknown>);
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_lookup_action — read-only canonical action spec lookup.
+  // Returns matching entries from the Authorization Intelligence Library.
+  // No authorization gate; no network calls; no side effects.
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "atlasent_lookup_action",
+    {
+      title: "Lookup Canonical Action Spec",
+      description:
+        "Look up canonical action specifications from the Authorization Intelligence Library. " +
+        "Returns gate flags (requires_human_approval, requires_mfa, requires_verified_actor, requires_state_snapshot), " +
+        "authorization patterns, risk posture, AI risk classification, regulatory mappings, and evidence requirements " +
+        "for any of the 17 governed action types. " +
+        "Use `slug` for an exact match (e.g. 'production.deploy') or `query` for a substring search " +
+        "across slug, display_name, and description. Omit both to list all 17 canonical actions.",
+      inputSchema: z.object({
+        slug: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Exact canonical action slug (e.g. 'production.deploy', 'access.grant')."),
+        query: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Substring search across slug, display_name, and description. Case-insensitive."),
+      }),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_lookup_action")) {
+        return {
+          ...toolResult({ error: "rate_limit_exceeded", message: "MCP tool rate limit exceeded — slow down and retry" }),
+          isError: true as const,
+        };
+      }
+
+      let results = CANON_ACT_CATALOG;
+
+      if (args.slug !== undefined && args.slug !== "") {
+        const target = args.slug.toLowerCase();
+        results = CANON_ACT_CATALOG.filter((a) => a.slug === target);
+      } else if (args.query !== undefined && args.query !== "") {
+        const q = args.query.toLowerCase();
+        results = CANON_ACT_CATALOG.filter(
+          (a) =>
+            a.slug.includes(q) ||
+            a.display_name.toLowerCase().includes(q) ||
+            a.description.toLowerCase().includes(q),
+        );
+      }
+
+      log("atlasent_lookup_action", {
+        slug: args.slug,
+        query: args.query,
+        result_count: results.length,
+      });
+
+      if (results.length === 0) {
+        return toolResult({
+          found: false,
+          result_count: 0,
+          actions: [],
+          hint: "No matching canonical action found. Use query='' or omit all parameters to list all 17 canonical slugs.",
+        } as unknown as Record<string, unknown>);
+      }
+
+      return toolResult({
+        found: true,
+        result_count: results.length,
+        actions: results,
+      } as unknown as Record<string, unknown>);
     },
   );
 
