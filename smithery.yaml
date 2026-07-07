@@ -11,7 +11,8 @@ configSchema:
       description: "AtlaSent API key (from your AtlaSent dashboard). Leave blank to run in local mode."
     baseUrl:
       type: string
-      description: "AtlaSent API base URL."
+      description: "AtlaSent API base URL. Leave blank to use the hosted SaaS endpoint (api.atlasent.io)."
+      default: "https://api.atlasent.io/functions/v1"
     mode:
       type: string
       description: "remote (default when apiKey is set) or local (in-process rules engine, no API calls)"
