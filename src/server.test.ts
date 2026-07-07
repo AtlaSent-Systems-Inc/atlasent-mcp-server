@@ -103,6 +103,7 @@ describe("tools/list", () => {
       "atlasent_list_policies",
       "atlasent_list_scim_groups",
       "atlasent_list_scim_users",
+      "atlasent_lookup_action",
       "atlasent_patch_scim_user",
       "atlasent_permit",
       "atlasent_query",
