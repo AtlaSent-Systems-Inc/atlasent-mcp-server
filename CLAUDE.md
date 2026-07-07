@@ -20,13 +20,26 @@ Cross-repo invariants for this repo:
 
 ```
 src/
-  decision.ts         Decision / VerifyResult types + toolResult() MCP envelope helper
-  localEngine.ts      Tiny rules engine used when no hosted backend is configured
-  engine.ts           authorize() / verify(): dispatches to local or remote; fail-closed wrapper
-  server.ts           createServer(): registers evaluate, verify_permit, deploy_service (demo)
-  index.ts            CLI entry point; connects stdio transport
-  server.test.ts      26 unit tests: tools/list, evaluate (local + remote), verify_permit, deploy_service
-  integration.test.ts Live-API tests; require ATLASENT_API_KEY + ATLASENT_BASE_URL, skip otherwise
+  decision.ts                   Decision / VerifyResult types + toolResult() MCP envelope helper
+  localEngine.ts                Tiny rules engine used when no hosted backend is configured
+  engine.ts                     authorize() / verify(): dispatches to local or remote; fail-closed wrapper
+  server.ts                     createServer(): registers evaluate, verify_permit, deploy_service + 20+ tools
+  v2Tools.ts                    Wave B tools: atlasent_evaluate_many, atlasent_evaluate_stream, atlasent_query
+  v2Client.ts                   HTTP clients for Wave A endpoints; FeatureNotEnabledError on 404
+  complianceTools.ts            SCIM, SIEM config, evidence export MCP tools
+  vqpTools.ts                   VQP snapshot generation, verification, drift event tools
+  trajectoryVerify.ts           atlasent_trajectory_verify: per-step trajectory drift detection
+  streamableHttp.ts             Streamable HTTP transport (MCP HTTP mode)
+  index.ts                      CLI entry point; connects stdio transport
+  server.test.ts                Unit tests: tools/list, evaluate (local + remote), verify_permit, deploy_service
+  server.readonly.test.ts       READONLY mode tests
+  complianceTools.test.ts       Compliance tool unit tests
+  v2Tools.test.ts               V2 Wave B tool unit tests
+  v2Client.test.ts              V2 HTTP client unit tests
+  trajectoryVerify.test.ts      Trajectory verify unit tests
+  streamableHttp.integration.test.ts  Streamable HTTP transport integration tests
+  integration.test.ts           Live-API tests; require ATLASENT_API_KEY + ATLASENT_BASE_URL, skip otherwise
+  integration.write.test.ts     Live-API write tests (mutating tools)
 
 examples/
   demo.mjs            End-to-end script: spawns server, drives evaluate -> deploy -> verify flow
@@ -70,7 +83,7 @@ npm run test:integration  # live API; needs ATLASENT_API_KEY + ATLASENT_BASE_URL
 npm run demo              # end-to-end demo in local mode
 ```
 
-Tests use `node:test` + MCP SDK's `InMemoryTransport`. `globalThis.fetch` is mocked per-test in remote-mode tests; local-mode tests touch no network.
+Tests use `node:test` + MCP SDK's `InMemoryTransport`. `globalThis.fetch` is mocked per-test in remote-mode tests; local-mode tests touch no network. The `npm test` count grows as new tools are added; check `src/*.test.ts` for the current count.
 
 ## Key design decisions
 
@@ -89,6 +102,41 @@ Hosted backend: `atlasent-api/supabase/functions/v1-{evaluate,verify-permit}/han
 - `POST /v1-verify-permit`: `{ permit_token, action_type, actor_id }` -> `{ valid, outcome, verify_error_code?, reason? }`
 
 Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
+
+## Disabled Endpoints (atlasent-api)
+
+The following atlasent-api edge functions are intentionally **not deployed** on the runtime project and have **no corresponding MCP tools** in this repo. Do not add MCP tools that call these paths — they will always 404 in production:
+
+| Function name | Notes |
+|---|---|
+| `v1-redteam-runs` | Red-team evaluation runner — held back from V1 pilot surface |
+| `v1-post-evaluations` | Post-evaluation annotation endpoint — held back |
+| `v1-spiffe-validate` | SPIFFE workload identity validation — held back |
+| `v1-sso` | SSO callback handler — held back |
+| `v1-policy-bundles` | Legacy policy bundle endpoint — held back |
+| `v1-marketplace-packs` | Marketplace action packs — held back |
+| `v1-decisions-stream` | Decision streaming endpoint — held back |
+| `v1-transparency-anchor` | Transparency anchoring endpoint — held back |
+
+Source of truth: `atlasent-api/supabase/runtime-functions-disabled.json`. The V2 Wave A batch/stream/graphql endpoints (`/v1/evaluate/batch`, `/v1/evaluate/stream`, `/v1/graphql`) are separate from this list and are properly gated at the tenant level (`FeatureNotEnabledError` on 404).
+
+## Vault cron secret requirement (atlasent-api operators)
+
+If you are running this MCP server against a **self-hosted or fresh atlasent-api** runtime project, be aware that 8 runtime HTTP cron jobs have never fired since creation on managed Supabase instances. These crons were re-pointed to read their bearer secrets from Vault (migration `20260702000000_crons_vault_secret_migration.sql`) because `current_setting('app.*')` GUCs are not settable on managed Supabase (`42501` permission error).
+
+**Until the following Vault secrets are created, those crons post a NULL bearer and receive 401 (fail-safe, no enforcement effect):**
+
+| Vault secret name | Cron it enables |
+|---|---|
+| `ATLASENT_AUDIT_SIGN_SWEEP_WORKER_SECRET` | `audit-sign-reconciliation-sweep` |
+| `ATLASENT_CHAIN_ANCHOR_WORKER_SECRET` | `chain-anchor-every-5min` |
+| `ATLASENT_BILLING_ADMIN_SECRET` | `governed-action-stripe-sync` |
+| `ATLASENT_EVIDENCE_SCHEDULER_SECRET` | `evidence-scheduler-sweep` |
+| `ATLASENT_BVS_WORKER_SECRET` | `bvs-observe-hourly`, `bvs-adjustment-engine-5min` |
+| `ATLASENT_DELEGATION_SHADOW_WORKER_SECRET` | `delegation-shadow-every-5min` |
+| `supabase_functions_base_url` | All of the above (functions base URL) |
+
+See `atlasent-api/docs/runbooks/CRON_VAULT_SECRETS.md` for the full setup procedure. This does not affect MCP server behavior directly (the MCP server calls evaluate/verify synchronously), but audit-chain signing, chain anchoring, and billing sync will be silently broken on a new runtime deployment until these secrets are set.
 
 ## npm publishing
 
