@@ -1371,10 +1371,8 @@ describe("atlasent_evaluate explain + risk_envelope", () => {
     await client.callTool({
       name: "atlasent_evaluate",
       arguments: {
-        subject: "user:alice",
-        action: "production.deploy",
-        resource: "env:prod",
-        org_id: "org_1",
+        actor_id: "user:alice",
+        action_type: "production.deploy",
         explain: true,
       },
     });
@@ -1396,10 +1394,8 @@ describe("atlasent_evaluate explain + risk_envelope", () => {
     await client.callTool({
       name: "atlasent_evaluate",
       arguments: {
-        subject: "user:alice",
-        action: "production.deploy",
-        resource: "env:prod",
-        org_id: "org_1",
+        actor_id: "user:alice",
+        action_type: "production.deploy",
       },
     });
     const body = captured[0].body as Record<string, unknown>;
@@ -1433,10 +1429,8 @@ describe("atlasent_evaluate explain + risk_envelope", () => {
     const result = await client.callTool({
       name: "atlasent_evaluate",
       arguments: {
-        subject: "user:alice",
-        action: "production.deploy",
-        resource: "env:prod",
-        org_id: "org_1",
+        actor_id: "user:alice",
+        action_type: "production.deploy",
         explain: true,
       },
     });
@@ -1466,10 +1460,8 @@ describe("atlasent_evaluate explain + risk_envelope", () => {
     const result = await client.callTool({
       name: "atlasent_evaluate",
       arguments: {
-        subject: "user:alice",
-        action: "production.deploy",
-        resource: "env:prod",
-        org_id: "org_1",
+        actor_id: "user:alice",
+        action_type: "production.deploy",
       },
     });
     const data = parseResult(result);
@@ -1499,10 +1491,8 @@ describe("atlasent_evaluate explain + risk_envelope", () => {
     const result = await client.callTool({
       name: "atlasent_evaluate",
       arguments: {
-        subject: "user:alice",
-        action: "production.deploy",
-        resource: "env:prod",
-        org_id: "org_1",
+        actor_id: "user:alice",
+        action_type: "production.deploy",
       },
     });
     const data = parseResult(result);
