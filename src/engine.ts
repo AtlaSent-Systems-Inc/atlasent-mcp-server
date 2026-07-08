@@ -397,10 +397,8 @@ export interface RiskEnvelope {
 }
 
 export interface EvaluateParams {
-  subject: string;
-  action: string;
-  resource: string;
-  org_id: string;
+  actor_id: string;
+  action_type: string;
   context?: Record<string, unknown>;
   explain?: boolean;
   state_snapshot?: Record<string, unknown>;
@@ -408,9 +406,8 @@ export interface EvaluateParams {
 
 export interface EvaluateResponse {
   decision: string;
-  evaluationId?: string;
-  permit?: string;
-  permitToken?: string;
+  evaluation_id?: string;
+  permit_token?: string;
   reasons?: string[];
   risk_envelope?: RiskEnvelope;
   [key: string]: unknown;
@@ -418,10 +415,8 @@ export interface EvaluateResponse {
 
 export async function evaluateAction(params: EvaluateParams): Promise<EvaluateResponse> {
   const body: Record<string, unknown> = {
-    subject: params.subject,
-    action: params.action,
-    resource: params.resource,
-    org_id: params.org_id,
+    action_type: params.action_type,
+    actor_id: params.actor_id,
   };
   if (params.context !== undefined) body.context = params.context;
   if (params.explain !== undefined) body.explain = params.explain;

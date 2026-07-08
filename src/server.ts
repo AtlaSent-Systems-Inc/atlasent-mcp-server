@@ -476,30 +476,20 @@ export function createServer(): McpServer {
         "Use this when ATLASENT_MODE=remote and you need to gate an action " +
         "against your hosted policy engine.",
       inputSchema: z.object({
-        subject: z
+        actor_id: z
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
           .describe("The actor performing the action (e.g. 'user:alice', 'service:deploy-bot')."),
-        action: z
+        action_type: z
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
           .describe("What action is being performed (e.g. 'production.deploy', 'records.delete')."),
-        resource: z
-          .string()
-          .min(1)
-          .max(MAX_FIELD_LEN)
-          .describe("The resource being acted on (e.g. 'env:prod', 'db:customers')."),
-        org_id: z
-          .string()
-          .min(1)
-          .max(MAX_FIELD_LEN)
-          .describe("Organization ID that owns the policy."),
         context: z
           .record(z.string(), z.unknown())
           .optional()
-          .describe("Key-value context matched against constraint rules."),
+          .describe("Key-value context matched against constraint rules (include target/resource info here)."),
         explain: z
           .boolean()
           .optional()
@@ -521,10 +511,8 @@ export function createServer(): McpServer {
       }
       try {
         const result = await evaluateAction({
-          subject: args.subject,
-          action: args.action,
-          resource: args.resource,
-          org_id: args.org_id,
+          actor_id: args.actor_id,
+          action_type: args.action_type,
           context: args.context,
           ...(args.explain !== undefined ? { explain: args.explain } : {}),
         });
