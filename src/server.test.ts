@@ -82,6 +82,7 @@ describe("tools/list", () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
+      "atlasent_atlas_lookup",
       "atlasent_create_approval_request",
       "atlasent_create_evidence_export",
       "atlasent_create_policy",
@@ -133,6 +134,56 @@ describe("tools/list", () => {
     for (const f of ["service_name", "environment", "actor_id"]) {
       assert.ok(required.includes(f), `missing required field: ${f}`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_atlas_lookup — Knowledge Atlas (read-only, no network)
+// ---------------------------------------------------------------------------
+
+describe("atlasent_atlas_lookup", () => {
+  it("lists every concept when called with no arguments", async () => {
+    const { client } = await setup();
+    const result = await client.callTool({ name: "atlasent_atlas_lookup", arguments: {} });
+    const body = parseResult(result);
+    assert.equal(body.found, true);
+    assert.ok((body.result_count as number) >= 17, "expected the full concept index");
+    const ids = (body.concepts as Array<{ id: string }>).map((c) => c.id);
+    for (const id of ["permit", "policy", "gate", "audit-chain", "caller", "trust-root"]) {
+      assert.ok(ids.includes(id), `index missing concept: ${id}`);
+    }
+  });
+
+  it("returns a concept with resolved relationships for an exact id", async () => {
+    const { client } = await setup();
+    const result = await client.callTool({ name: "atlasent_atlas_lookup", arguments: { id: "permit" } });
+    const body = parseResult(result);
+    assert.equal(body.found, true);
+    assert.equal(body.result_count, 1);
+    const c = (body.concepts as Array<Record<string, unknown>>)[0];
+    assert.equal(c.id, "permit");
+    assert.match(String(c.source_of_truth), /canon\/010/);
+    // relationships are resolved to { id, term } / surfaces, not bare ids
+    const usedBy = c.used_by as Array<{ id: string; term: string }>;
+    assert.ok(usedBy.some((u) => u.id === "verification" && typeof u.term === "string"));
+    assert.ok((c.realized_by as unknown[]).length > 0, "permit should be realized by surfaces");
+  });
+
+  it("substring query matches across term/definition", async () => {
+    const { client } = await setup();
+    const result = await client.callTool({ name: "atlasent_atlas_lookup", arguments: { query: "audit" } });
+    const body = parseResult(result);
+    assert.equal(body.found, true);
+    const ids = (body.concepts as Array<{ id: string }>).map((c) => c.id);
+    assert.ok(ids.includes("audit-chain"), "query 'audit' should match audit-chain");
+  });
+
+  it("reports found=false for an unknown id", async () => {
+    const { client } = await setup();
+    const result = await client.callTool({ name: "atlasent_atlas_lookup", arguments: { id: "does-not-exist" } });
+    const body = parseResult(result);
+    assert.equal(body.found, false);
+    assert.equal(body.result_count, 0);
   });
 });
 
