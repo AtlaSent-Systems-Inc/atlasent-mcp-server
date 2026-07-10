@@ -24,7 +24,8 @@ src/
   localEngine.ts                Tiny rules engine used when no hosted backend is configured
   engine.ts                     authorize() / verify(): dispatches to local or remote; fail-closed wrapper
   server.ts                     createServer(): registers evaluate, verify_permit, deploy_service + 20+ tools
-  canonCatalog.ts               GENERATED-DERIVED: the 17 canonical action specs (from the atlasent repo); backs atlasent_lookup_action
+  canonCatalog.ts               GENERATED-DERIVED: the canonical action specs incl. canon_id (from the atlasent repo); backs atlasent_lookup_action. Re-sync with scripts/sync-canon.mjs
+  canonGraph.ts                 GENERATED-DERIVED: per-action knowledge-graph neighborhood + compliance (from atlasent/generated/authorization-graph.json); enriches atlasent_lookup_action. Re-sync with scripts/sync-canon.mjs
   atlasCatalog.ts               GENERATED-DERIVED: the Knowledge Atlas (concepts + edges, from atlasent-docs/architecture/traceability/atlas.json); backs atlasent_atlas_lookup. Re-vendor with scripts/vendor-atlas.mjs
   v2Tools.ts                    Wave B tools: atlasent_evaluate_many, atlasent_evaluate_stream, atlasent_query
   v2Client.ts                   HTTP clients for Wave A endpoints; FeatureNotEnabledError on 404

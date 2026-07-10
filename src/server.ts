@@ -40,6 +40,7 @@ import { registerComplianceTools } from "./complianceTools.js";
 import { registerVqpTools } from "./vqpTools.js";
 import { trajectoryVerify } from "./trajectoryVerify.js";
 import { CANON_ACT_CATALOG } from "./canonCatalog.js";
+import { CANON_ACTION_GRAPH } from "./canonGraph.js";
 import { ATLAS_CONCEPTS, ATLAS_NODES, ATLAS_SOURCE } from "./atlasCatalog.js";
 
 export const VERSION = "2.11.0";
@@ -1567,11 +1568,12 @@ export function createServer(): McpServer {
       title: "Lookup Canonical Action Spec",
       description:
         "Look up canonical action specifications from the Authorization Intelligence Library. " +
-        "Returns gate flags (requires_human_approval, requires_mfa, requires_verified_actor, requires_state_snapshot), " +
-        "authorization patterns, risk posture, AI risk classification, regulatory mappings, and evidence requirements " +
-        "for any of the 17 governed action types. " +
+        "Returns the permanent canon_id, gate flags (requires_human_approval, requires_mfa, requires_verified_actor, requires_state_snapshot), " +
+        "authorization pattern, risk posture, AI risk classification, regulatory mappings, evidence requirements, and the action's " +
+        "knowledge-graph relationships (what it requires and produces, and which frameworks / control objectives it satisfies) " +
+        "for every governed action type in the Canon. " +
         "Use `slug` for an exact match (e.g. 'production.deploy') or `query` for a substring search " +
-        "across slug, display_name, and description. Omit both to list all 17 canonical actions.",
+        "across slug, display_name, and description. Omit both to list the full Canon.",
       inputSchema: z.object({
         slug: z
           .string()
@@ -1624,14 +1626,22 @@ export function createServer(): McpServer {
           found: false,
           result_count: 0,
           actions: [],
-          hint: "No matching canonical action found. Use query='' or omit all parameters to list all 17 canonical slugs.",
+          hint: "No matching canonical action found. Use query='' or omit all parameters to list the full Canon.",
         } as unknown as Record<string, unknown>);
       }
 
+      // Enrich each result with its knowledge-graph neighborhood (relationships)
+      // so an agent gets the full profile — requires/produces/frameworks/controls —
+      // from the compiler output rather than guessing.
+      const enriched = results.map((a) => ({
+        ...a,
+        relationships: CANON_ACTION_GRAPH[a.slug] ?? null,
+      }));
+
       return toolResult({
         found: true,
-        result_count: results.length,
-        actions: results,
+        result_count: enriched.length,
+        actions: enriched,
       } as unknown as Record<string, unknown>);
     },
   );

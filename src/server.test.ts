@@ -1607,3 +1607,51 @@ describe("atlasent_trajectory_verify", () => {
     assert.equal(result.isError, true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// atlasent_lookup_action — Canon-native lookup (canon_id + graph relationships)
+// ---------------------------------------------------------------------------
+
+describe("atlasent_lookup_action (Canon-native)", () => {
+  it("lists the full Canon when called with no arguments", async () => {
+    const { client } = await setup();
+    const result = await client.callTool({ name: "atlasent_lookup_action", arguments: {} });
+    const body = parseResult(result);
+    assert.equal(body.found, true);
+    assert.ok((body.result_count as number) >= 29, "expected the full 29+ action Canon");
+  });
+
+  it("returns canon_id and graph relationships for an exact slug", async () => {
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_lookup_action",
+      arguments: { slug: "production.deploy" },
+    });
+    const body = parseResult(result);
+    assert.equal(body.found, true);
+    const action = (body.actions as Array<Record<string, unknown>>)[0];
+    assert.match(String(action.canon_id), /^CANON-\d{6}$/);
+    const rel = action.relationships as {
+      requires: string[];
+      produces: string[];
+      pattern: string;
+    };
+    assert.ok(rel, "expected knowledge-graph relationships");
+    assert.equal(rel.pattern, "four-eyes");
+    assert.ok(rel.requires.includes("approval"), "deploy requires approval");
+    assert.ok(rel.produces.includes("permit"), "deploy produces a permit");
+  });
+
+  it("surfaces the flagship agent action added in the catalog expansion", async () => {
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_lookup_action",
+      arguments: { slug: "agent.tool.invoke" },
+    });
+    const body = parseResult(result);
+    assert.equal(body.found, true);
+    const action = (body.actions as Array<Record<string, unknown>>)[0];
+    const rel = action.relationships as { assertions: string[] };
+    assert.ok(rel.assertions.includes("identity"), "agent.tool.invoke requires identity assertion");
+  });
+});
