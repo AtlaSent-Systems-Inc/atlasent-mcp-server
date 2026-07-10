@@ -40,6 +40,7 @@ import { registerComplianceTools } from "./complianceTools.js";
 import { registerVqpTools } from "./vqpTools.js";
 import { trajectoryVerify } from "./trajectoryVerify.js";
 import { CANON_ACT_CATALOG } from "./canonCatalog.js";
+import { ATLAS_CONCEPTS, ATLAS_NODES, ATLAS_SOURCE } from "./atlasCatalog.js";
 
 export const VERSION = "2.11.0";
 
@@ -1631,6 +1632,120 @@ export function createServer(): McpServer {
         found: true,
         result_count: results.length,
         actions: results,
+      } as unknown as Record<string, unknown>);
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_atlas_lookup — the Knowledge Atlas as an MCP tool.
+  // Read-only, no network, no auth gate. Lets any MCP host reason about
+  // AtlaSent's own vocabulary from the same compiled graph the docs/console use.
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "atlasent_atlas_lookup",
+    {
+      title: "AtlaSent — Knowledge Atlas Lookup",
+      description:
+        "Look up a canonical AtlaSent concept from the Knowledge Atlas — the compiled graph of the system's own " +
+        "vocabulary (Caller, Authority, Policy, Decision, Permit, Verification, Evidence, Audit Chain, Gate, Trust Root, ...). " +
+        "Returns the concept's canonical definition (its source-of-truth doc), its relationships (what it depends on and " +
+        "what depends on it), the surfaces that realize it, and its ADR / API / SDK / implementation anchors — so every AI " +
+        "host reasons from the same canonical knowledge instead of guessing. " +
+        "Use `id` for an exact concept id (e.g. 'permit', 'audit-chain', 'gate') or `query` for a case-insensitive substring " +
+        "search across id, term, and definition. Omit both to list every concept.",
+      inputSchema: z.object({
+        id: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Exact concept id (e.g. 'permit', 'audit-chain', 'gate', 'trust-root')."),
+        query: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Substring search across id, term, and definition. Case-insensitive."),
+      }),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_atlas_lookup")) {
+        return {
+          ...toolResult({ error: "rate_limit_exceeded", message: "MCP tool rate limit exceeded — slow down and retry" }),
+          isError: true as const,
+        };
+      }
+
+      const byId = new Map(ATLAS_CONCEPTS.map((c) => [c.id, c]));
+      const nodeById = new Map(ATLAS_NODES.map((n) => [n.id, n]));
+      const term = (id: string) => byId.get(id)?.term ?? id;
+      const surface = (id: string) => {
+        const n = nodeById.get(id);
+        return n ? { id: n.id, name: n.name, ref: n.ref } : { id, name: id, ref: null };
+      };
+
+      // Omit both -> return the index of every concept.
+      if ((args.id === undefined || args.id === "") && (args.query === undefined || args.query === "")) {
+        log("atlasent_atlas_lookup", { mode: "index", result_count: ATLAS_CONCEPTS.length });
+        return toolResult({
+          found: true,
+          source: ATLAS_SOURCE,
+          result_count: ATLAS_CONCEPTS.length,
+          concepts: ATLAS_CONCEPTS.map((c) => ({ id: c.id, term: c.term, canon: c.canon })),
+        } as unknown as Record<string, unknown>);
+      }
+
+      let results = ATLAS_CONCEPTS;
+      if (args.id !== undefined && args.id !== "") {
+        const t = args.id.toLowerCase();
+        results = ATLAS_CONCEPTS.filter((c) => c.id === t);
+      } else if (args.query !== undefined && args.query !== "") {
+        const q = args.query.toLowerCase();
+        results = ATLAS_CONCEPTS.filter(
+          (c) =>
+            c.id.includes(q) ||
+            c.term.toLowerCase().includes(q) ||
+            (c.definition ?? "").toLowerCase().includes(q),
+        );
+      }
+
+      log("atlasent_atlas_lookup", { id: args.id, query: args.query, result_count: results.length });
+
+      if (results.length === 0) {
+        return toolResult({
+          found: false,
+          source: ATLAS_SOURCE,
+          result_count: 0,
+          concepts: [],
+          hint: "No matching concept. Omit all parameters to list every concept id.",
+        } as unknown as Record<string, unknown>);
+      }
+
+      const enriched = results.map((c) => ({
+        id: c.id,
+        term: c.term,
+        status: c.status,
+        source_of_truth: c.definition,
+        canon: c.canon,
+        adr: c.adr,
+        product_spec: c.product_spec,
+        implementation: c.implementation,
+        api: c.api,
+        sdk: c.sdk,
+        docs: c.docs,
+        depends_on: c.depends_on.map((d) => ({ id: d, term: term(d) })),
+        used_by: c.used_by.map((u) => ({ id: u, term: term(u) })),
+        realized_by: c.realized_by.map(surface),
+      }));
+
+      return toolResult({
+        found: true,
+        source: ATLAS_SOURCE,
+        result_count: enriched.length,
+        concepts: enriched,
       } as unknown as Record<string, unknown>);
     },
   );

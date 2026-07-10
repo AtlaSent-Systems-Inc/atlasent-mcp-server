@@ -24,6 +24,8 @@ src/
   localEngine.ts                Tiny rules engine used when no hosted backend is configured
   engine.ts                     authorize() / verify(): dispatches to local or remote; fail-closed wrapper
   server.ts                     createServer(): registers evaluate, verify_permit, deploy_service + 20+ tools
+  canonCatalog.ts               GENERATED-DERIVED: the 17 canonical action specs (from the atlasent repo); backs atlasent_lookup_action
+  atlasCatalog.ts               GENERATED-DERIVED: the Knowledge Atlas (concepts + edges, from atlasent-docs/architecture/traceability/atlas.json); backs atlasent_atlas_lookup. Re-vendor with scripts/vendor-atlas.mjs
   v2Tools.ts                    Wave B tools: atlasent_evaluate_many, atlasent_evaluate_stream, atlasent_query
   v2Client.ts                   HTTP clients for Wave A endpoints; FeatureNotEnabledError on 404
   complianceTools.ts            SCIM, SIEM config, evidence export MCP tools
