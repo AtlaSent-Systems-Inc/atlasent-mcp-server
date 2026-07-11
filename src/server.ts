@@ -176,12 +176,19 @@ async function agentToolGate(
   toolName: string,
   actorId: string,
   environment: string,
+  approvals?: string[],
 ): Promise<import("./decision.js").Decision | null> {
+  // Forward the call's approvals into the gate context. Without this, a
+  // production tool call is denied at the agent gate for "no approvals" even
+  // when the caller supplied them — the approval never reaches the gate — so
+  // no production action can ever pass, defeating the two-layer pattern.
+  // Fail-closed is preserved: a production call with no approvals still denies.
   const ctx: ActionContext = {
     action_type: "model.agent.execute_tool",
     actor_id: actorId,
     environment,
     tool_name: toolName,
+    ...(approvals && approvals.length ? { approvals } : {}),
   };
   const gate = await authorize(ctx);
   if (gate.decision !== "allow") {
@@ -430,8 +437,10 @@ export function createServer(): McpServer {
         return toolResult(decision);
       }
 
-      // Agent tool gate: check model.agent.execute_tool before deploy-specific authorization.
-      const agentGate = await agentToolGate("deploy_service", args.actor_id, args.environment);
+      // Agent tool gate: check model.agent.execute_tool before deploy-specific
+      // authorization. Forward approvals so an approved production deploy passes
+      // the gate (an unapproved one still fails closed).
+      const agentGate = await agentToolGate("deploy_service", args.actor_id, args.environment, args.approvals);
       if (agentGate !== null) return toolResult(agentGate);
 
       const ctx: ActionContext = {
