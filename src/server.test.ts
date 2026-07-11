@@ -661,11 +661,9 @@ describe("deploy_service (authorization-gated)", () => {
 
   it("executes the deploy when policy allows", async () => {
     // With the two-layer gate, both agentToolGate (model.agent.execute_tool)
-    // and the deploy-specific gate (production.deploy) must allow. In local
-    // mode, agentToolGate uses the same local engine which denies production
-    // actions without approvals — but agentToolGate only receives the
-    // environment, not the per-deploy approvals. Use staging so both gates
-    // pass unconditionally in local mode, verifying the full execute path.
+    // and the deploy-specific gate (production.deploy) must allow. Staging passes
+    // both gates unconditionally in local mode, verifying the full execute path.
+    // (The production-with-approvals path is covered by the regression test below.)
     forceLocalMode();
     const { client } = await setup();
     const result = await client.callTool({
@@ -684,6 +682,48 @@ describe("deploy_service (authorization-gated)", () => {
     assert.equal(res.status, "deployed");
     assert.equal(res.service, "billing-api");
     assert.equal(res.environment, "staging");
+  });
+
+  it("executes production deploys WITH approvals (agent gate forwards approvals)", async () => {
+    // Regression guard. Before the agent gate forwarded approvals, a production
+    // deploy WITH approvals was still denied at the model.agent.execute_tool
+    // gate (which never received them), so no production action could ever pass
+    // the two-layer gate. The same approvals must now satisfy both layers.
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "deploy_service",
+      arguments: {
+        service_name: "billing-api",
+        environment: "production",
+        actor_id: "agent-7",
+        approvals: ["ticket-42"],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "allow", "production deploy with approvals must pass both gates");
+    assert.ok(data.permit_token, "must return a permit_token");
+    const res = data.result as Record<string, unknown>;
+    assert.equal(res.status, "deployed");
+    assert.equal(res.environment, "production");
+  });
+
+  it("blocks a production deploy WITHOUT approvals at the agent gate (fail-closed preserved)", async () => {
+    // The complement of the regression guard: forwarding approvals must not
+    // weaken fail-closed. A production deploy with no approvals still denies.
+    forceLocalMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "deploy_service",
+      arguments: {
+        service_name: "billing-api",
+        environment: "production",
+        actor_id: "agent-7",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny", "production deploy without approvals must fail closed");
+    assert.equal(data.result, undefined, "deploy must NOT execute when denied");
   });
 
   it("executes staging deploys without approvals", async () => {
