@@ -618,6 +618,41 @@ describe("verify_permit (remote mode)", () => {
     assert.equal(data.valid, false);
     assert.equal(result.isError, true);
   });
+
+  it("presents the full binding set (environment + payload_hash + target_id) to /v1-verify-permit", async () => {
+    forceRemoteMode();
+    let capturedUrl = "";
+    let capturedBody: Record<string, unknown> = {};
+    globalThis.fetch = mock.fn(
+      async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        capturedUrl = String(url);
+        capturedBody = JSON.parse((init?.body as string) ?? "{}");
+        return new Response(JSON.stringify({ valid: true, outcome: "allow" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    );
+    const { client } = await setup();
+    await client.callTool({
+      name: "verify_permit",
+      arguments: {
+        ...EVAL_ARGS,
+        permit_token: "pt_abc",
+        target_id: "service:hello",
+        payload_hash: "sha256:args-A",
+      },
+    });
+    assert.ok(capturedUrl.includes("/v1-verify-permit"));
+    assert.equal(capturedBody.permit_token, "pt_abc");
+    assert.equal(capturedBody.action_type, "production.deploy");
+    assert.equal(capturedBody.actor_id, "user-1");
+    // environment must be presented so ENVIRONMENT_MISMATCH can fire (acceptance AC-6)
+    assert.equal(capturedBody.environment, "production");
+    // payload_hash must be presented so PAYLOAD_MISMATCH can fire (acceptance AC-5)
+    assert.equal(capturedBody.payload_hash, "sha256:args-A");
+    assert.equal(capturedBody.target_id, "service:hello");
+  });
 });
 
 // ---------------------------------------------------------------------------

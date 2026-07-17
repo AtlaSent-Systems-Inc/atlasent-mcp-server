@@ -81,6 +81,18 @@ const changeWindow = z
   .max(MAX_FIELD_LEN)
   .optional()
   .describe("ISO-8601 time window during which the change is permitted (e.g. 2025-01-15T02:00:00Z/PT4H).");
+const targetId = z
+  .string()
+  .min(1)
+  .max(MAX_FIELD_LEN)
+  .optional()
+  .describe("Target resource the permit is bound to (e.g. service name, artifact id, tool-call target). Presenting a different target at verify yields a binding mismatch.");
+const payloadHash = z
+  .string()
+  .min(1)
+  .max(MAX_FIELD_LEN)
+  .optional()
+  .describe("Hash of the exact executed payload (tool-call arguments / artifact digest). Bind it at evaluate via execution_payload_hash; presenting a different hash at verify yields PAYLOAD_MISMATCH.");
 
 // Fields we'll keep verbatim in the structured stderr log. Anything
 // not on the allowlist is either dropped (sensitive) or hashed-and-
@@ -357,6 +369,8 @@ export function createServer(): McpServer {
         environment,
         approvals,
         change_window: changeWindow,
+        target_id: targetId,
+        payload_hash: payloadHash,
       }),
       annotations: {
         title: "AtlaSent — Verify Permit",
@@ -381,6 +395,8 @@ export function createServer(): McpServer {
         environment: args.environment,
         ...(args.approvals ? { approvals: args.approvals } : {}),
         ...(args.change_window ? { change_window: args.change_window } : {}),
+        ...(args.target_id ? { target_id: args.target_id } : {}),
+        ...(args.payload_hash ? { payload_hash: args.payload_hash } : {}),
       };
       const result = await verify(args.permit_token, ctx);
       log("verify_permit", { ctx, permit_token: args.permit_token, result });
