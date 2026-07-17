@@ -339,10 +339,20 @@ interface RawVerify {
 }
 
 async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyResult> {
+  // Present the full binding set at the verify boundary. Under-specified
+  // verification is a bypass vector: without `environment` a permit bound to
+  // production verifies against staging (ENVIRONMENT_MISMATCH never fires), and
+  // without `payload_hash` an altered tool call verifies against the original
+  // (PAYLOAD_MISMATCH never fires). The v1-verify-permit handler reads these
+  // top-level fields (see its request parsing); they are additive — omitted
+  // fields simply skip that binding check.
   const body: Record<string, unknown> = {
     permit_token: token,
     action_type: ctx.action_type,
     actor_id: ctx.actor_id,
+    environment: ctx.environment,
+    ...(ctx.target_id ? { target_id: ctx.target_id } : {}),
+    ...(ctx.payload_hash ? { payload_hash: ctx.payload_hash } : {}),
   };
 
   const data = await post<RawVerify>("/v1-verify-permit", body);

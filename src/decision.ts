@@ -13,6 +13,19 @@ export type ActionContext = {
   change_window?: string;
   tool_name?: string;
   state_snapshot?: Record<string, unknown>;
+  /**
+   * Target resource the permit is bound to (service, artifact, tool-call
+   * target). Presented at the verify boundary so a permit bound to one target
+   * cannot verify against another.
+   */
+  target_id?: string;
+  /**
+   * Hash of the exact executed payload (tool-call arguments / artifact digest).
+   * Bind it at evaluate via `execution_payload_hash`; presenting a different
+   * hash at verify yields `PAYLOAD_MISMATCH`. This is what makes an altered
+   * tool call fail closed rather than silently execute.
+   */
+  payload_hash?: string;
 };
 
 export type AllowDecision = {
