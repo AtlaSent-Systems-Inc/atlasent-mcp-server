@@ -267,20 +267,56 @@ interface RawEvaluate {
   hold_id?: string;
 }
 
+// Shared base request-body construction for POST /v1-evaluate. Both call
+// paths that hit this endpoint — the canonical enforcement path
+// (authorizeRemote) and the raw evaluate tool path (evaluateAction) — send
+// the same canonical fields (action_type, actor_id, an optional context) and
+// the same default state_snapshot injection required since the
+// requires_state_snapshot backfill (20260603000019). Each caller shapes its
+// OWN distinct bits before handing them here: authorizeRemote pre-shapes the
+// approvals/change_window/tool_name context object, and evaluateAction passes
+// the raw caller-supplied context plus the explain flag. This helper only
+// assembles the shared base body — it changes no behavior.
+//
+// The key insertion order (action_type, actor_id, context?, explain?,
+// state_snapshot) is load-bearing: it reproduces the exact JSON both paths
+// serialized before this de-dup, so the wire body stays byte-identical.
+// authorizeRemote never passes `explain` (so it is omitted, exactly as
+// before) and always passes a shaped context; evaluateAction includes
+// context/explain only when defined.
+interface EvaluateRequestBodyInput {
+  action_type: string;
+  actor_id: string;
+  context?: Record<string, unknown>;
+  explain?: boolean;
+  state_snapshot?: Record<string, unknown>;
+}
+
+function buildEvaluateRequestBody(input: EvaluateRequestBodyInput): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    action_type: input.action_type,
+    actor_id: input.actor_id,
+  };
+  if (input.context !== undefined) body.context = input.context;
+  if (input.explain !== undefined) body.explain = input.explain;
+  // state_snapshot is a top-level EvaluateBody field required when
+  // requires_state_snapshot=true (all classes since backfill 20260603000019).
+  body.state_snapshot = input.state_snapshot ?? { source: "atlasent-mcp", complete: true };
+  return body;
+}
+
 async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   const context: Record<string, unknown> = { environment: ctx.environment };
   if (ctx.approvals !== undefined) context.approvals = ctx.approvals;
   if (ctx.change_window !== undefined) context.change_window = ctx.change_window;
   if (ctx.tool_name !== undefined) context.tool_name = ctx.tool_name;
 
-  const body: Record<string, unknown> = {
+  const body = buildEvaluateRequestBody({
     action_type: ctx.action_type,
     actor_id: ctx.actor_id,
     context,
-    // state_snapshot is a top-level EvaluateBody field required when
-    // requires_state_snapshot=true (all classes since backfill 20260603000019).
-    state_snapshot: ctx.state_snapshot ?? { source: "atlasent-mcp", complete: true },
-  };
+    state_snapshot: ctx.state_snapshot,
+  });
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
 
@@ -414,23 +450,28 @@ export interface EvaluateParams {
   state_snapshot?: Record<string, unknown>;
 }
 
-export interface EvaluateResponse {
-  decision: string;
+// EvaluateResponse is the RAW /v1-evaluate response returned verbatim by the
+// atlasent_evaluate tool (evaluateAction). It extends the shared RawEvaluate
+// shape (the common raw evaluate fields — decision/permit_token/reasons/etc.)
+// so both call paths reference ONE raw-response type, and adds the distinct
+// fields this raw path exposes and the canonical enforcement path drops:
+// evaluation_id, risk_envelope, and an index signature for explain-driven and
+// forward-compatible fields. This is a typing-only unification — the runtime
+// object is the untouched API response, so no exposed field changes.
+export interface EvaluateResponse extends RawEvaluate {
   evaluation_id?: string;
-  permit_token?: string;
-  reasons?: string[];
   risk_envelope?: RiskEnvelope;
   [key: string]: unknown;
 }
 
 export async function evaluateAction(params: EvaluateParams): Promise<EvaluateResponse> {
-  const body: Record<string, unknown> = {
+  const body = buildEvaluateRequestBody({
     action_type: params.action_type,
     actor_id: params.actor_id,
-  };
-  if (params.context !== undefined) body.context = params.context;
-  if (params.explain !== undefined) body.explain = params.explain;
-  body.state_snapshot = params.state_snapshot ?? { source: "atlasent-mcp", complete: true };
+    context: params.context,
+    explain: params.explain,
+    state_snapshot: params.state_snapshot,
+  });
   return post<EvaluateResponse>("/v1-evaluate", body);
 }
 
