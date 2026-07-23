@@ -454,7 +454,6 @@ export const CANON_ACTION_GRAPH: Record<string, CanonNeighborhood> = {
   },
   "trial.unblinding.emergency": {
     "requires": [
-      "approval",
       "mfa",
       "verified-actor"
     ],
@@ -463,8 +462,8 @@ export const CANON_ACTION_GRAPH: Record<string, CanonNeighborhood> = {
       "permit"
     ],
     "assertions": [
-      "approval",
-      "identity"
+      "identity",
+      "regulatory"
     ],
     "frameworks": [
       "cfr_part_11",
@@ -711,5 +710,395 @@ export const CANON_ACTION_GRAPH: Record<string, CanonNeighborhood> = {
     ],
     "domain": "security",
     "pattern": "human-only"
+  },
+  "release.create": {
+    "requires": [
+      "state-snapshot"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.8.32 — Change Management",
+      "NIST SP 800-53 Rev.5 CM-3 — Configuration Change Control"
+    ],
+    "domain": "production",
+    "pattern": "role-only"
+  },
+  "production.rollback": {
+    "requires": [
+      "state-snapshot"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.8.32 — Change Management",
+      "NIST SP 800-53 Rev.5 CM-3 — Configuration Change Control"
+    ],
+    "domain": "production",
+    "pattern": "role-only"
+  },
+  "database.migrate": {
+    "requires": [
+      "approval",
+      "state-snapshot"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "sox"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.8.32 — Change Management",
+      "NIST SP 800-53 Rev.5 CM-3 — Configuration Change Control",
+      "SOX §404 — Management Assessment of Internal Controls"
+    ],
+    "domain": "infrastructure",
+    "pattern": "approval-chain"
+  },
+  "infrastructure.change": {
+    "requires": [
+      "approval",
+      "state-snapshot"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "pci_dss"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.8.32 — Change Management",
+      "NIST SP 800-53 Rev.5 CM-3 — Configuration Change Control",
+      "PCI DSS v4.0 Req. 1 — Install and Maintain Network Security Controls"
+    ],
+    "domain": "infrastructure",
+    "pattern": "approval-chain"
+  },
+  "feature.enable": {
+    "requires": [],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.8.32 — Change Management"
+    ],
+    "domain": "production",
+    "pattern": "role-only"
+  },
+  "secret.rotate": {
+    "requires": [
+      "state-snapshot"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "pci_dss"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.5.17 — Authentication Information",
+      "NIST SP 800-53 Rev.5 IA-5 — Authenticator Management",
+      "PCI DSS v4.0 Req. 3 — Protect Stored Account Data (key management)"
+    ],
+    "domain": "privileged",
+    "pattern": "role-only"
+  },
+  "traffic.failover": {
+    "requires": [
+      "state-snapshot"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.8.14 — Redundancy of Information Processing Facilities",
+      "NIST SP 800-53 Rev.5 CP-10 — System Recovery and Reconstitution"
+    ],
+    "domain": "infrastructure",
+    "pattern": "role-only"
+  },
+  "host.isolate": {
+    "requires": [
+      "state-snapshot",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.5.26 — Response to Information Security Incidents",
+      "NIST SP 800-53 Rev.5 IR-4 — Incident Handling"
+    ],
+    "domain": "infrastructure",
+    "pattern": "role-only"
+  },
+  "protocol.amend": {
+    "requires": [
+      "approval",
+      "state-snapshot",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [
+      "regulatory"
+    ],
+    "frameworks": [
+      "cfr_part_11",
+      "eu_annex_11",
+      "ich_e6_gcp"
+    ],
+    "controls": [
+      "21 CFR 312.30 — IND Protocol Amendments",
+      "EU Annex 11 §1 (Risk Management) / Clinical Trials Regulation substantial modifications",
+      "ICH E6(R2) §4.5 — Compliance with Protocol / §3.3 (IRB/IEC)"
+    ],
+    "domain": "clinical",
+    "pattern": "approval-chain"
+  },
+  "employment.terminate": {
+    "requires": [
+      "approval",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "sox"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.6.5 — Responsibilities after termination or change of employment",
+      "NIST SP 800-53 Rev.5 PS-4 — Personnel Termination",
+      "SOX §404 — segregation of duties over the employment/payroll decision"
+    ],
+    "domain": "people",
+    "pattern": "approval-chain"
+  },
+  "compensation.change": {
+    "requires": [
+      "approval",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "sox"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+      "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+      "SOX §404 — Management Assessment of Internal Controls"
+    ],
+    "domain": "people",
+    "pattern": "approval-chain"
+  },
+  "journal.post": {
+    "requires": [
+      "approval",
+      "state-snapshot"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "sox"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+      "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+      "SOX §404 — Management Assessment of Internal Controls"
+    ],
+    "domain": "finance",
+    "pattern": "four-eyes"
+  },
+  "period.close": {
+    "requires": [
+      "approval",
+      "state-snapshot"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "sox"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+      "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+      "SOX §404 — Management Assessment of Internal Controls"
+    ],
+    "domain": "finance",
+    "pattern": "four-eyes"
+  },
+  "trial.biomarker.reclassify": {
+    "requires": [
+      "approval",
+      "state-snapshot",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [
+      "identity",
+      "regulatory"
+    ],
+    "frameworks": [
+      "cfr_part_11",
+      "gxp_general",
+      "ich_e6_gcp"
+    ],
+    "controls": [
+      "21 CFR Part 11 §11.10(b) — Accurate and Complete Copies",
+      "21 CFR Part 11 §11.10(e) — Reason for Change",
+      "ICH E6(R2) §5.5.3 — Electronic Data Handling / Audit Trail",
+      "ICH E9 §5 — Data Handling / Integrity of Trial Results"
+    ],
+    "domain": "clinical",
+    "pattern": "approval-chain"
+  },
+  "trial.biomarker.eligibility.override": {
+    "requires": [
+      "approval",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [
+      "identity",
+      "regulatory"
+    ],
+    "frameworks": [
+      "cfr_part_11",
+      "gxp_general",
+      "ich_e6_gcp"
+    ],
+    "controls": [
+      "21 CFR 312.66 — Assurance of IRB Review / Investigator Obligations",
+      "ICH E6(R2) §4.5.3–4 — Compliance with Protocol / Deviations",
+      "ICH E9 §5.2 — Analysis Sets / Protocol Deviations"
+    ],
+    "domain": "clinical",
+    "pattern": "approval-chain"
+  },
+  "genomic.data.release": {
+    "requires": [
+      "approval",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [
+      "consent",
+      "identity",
+      "sensitivity"
+    ],
+    "frameworks": [
+      "gdpr",
+      "hipaa",
+      "iso27001"
+    ],
+    "controls": [
+      "GDPR Art. 9 — Special Categories / Art. 6 — Lawfulness",
+      "HIPAA §164.508 — Authorization / §164.312(b) — Audit Controls",
+      "ISO/IEC 27001:2022 A.8.15 — Logging / A.5.34 — Privacy & PII"
+    ],
+    "domain": "data",
+    "pattern": "approval-chain"
+  },
+  "genomic.data.export": {
+    "requires": [
+      "approval",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [
+      "consent",
+      "residency",
+      "sensitivity"
+    ],
+    "frameworks": [
+      "gdpr",
+      "iso27001"
+    ],
+    "controls": [
+      "GDPR Art. 44–49 — Transfers of Personal Data to Third Countries",
+      "GDPR Art. 9 — Special Categories (Genetic Data)",
+      "ISO/IEC 27001:2022 A.5.34 — Privacy & PII / A.8.15 — Logging"
+    ],
+    "domain": "data",
+    "pattern": "approval-chain"
   }
 };
