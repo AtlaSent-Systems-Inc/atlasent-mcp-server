@@ -1151,24 +1151,24 @@ export const CANON_ACT_CATALOG: ActSpecEntry[] = [
     "canon_id": "CANON-000020",
     "slug": "trial.unblinding.emergency",
     "display_name": "Emergency Clinical Trial Unblinding",
-    "description": "Authorization gate for emergency single-patient unblinding in a clinical trial — the act of breaking the blind for a specific subject when knowledge of their treatment assignment is required for immediate medical decision-making (e.g., a Serious Adverse Event requiring the treating physician to know whether the patient received drug or placebo). Emergency unblinding is per-subject, not a full trial unblinding, and must be performed by the principal investigator or site physician responsible for the subject's safety. Requires a single authorized human approver (the treating physician), a documented medical emergency justification, MFA for the authorizing physician, and an immediate audit record. The blind is broken for one subject only — other subjects remain blinded and the trial may continue. Regulatory basis: ICH E6(R2) §4.8.2–3, ICH E9 §6.5, 21 CFR Part 11 §11.300, EU Annex 11 §14.",
+    "description": "Authorization gate for emergency single-patient unblinding in a clinical trial — the act of breaking the blind for a specific subject when knowledge of their treatment assignment is required for immediate medical decision-making (e.g., a Serious Adverse Event requiring the treating physician to know whether the patient received drug or placebo). Emergency unblinding is per-subject, not a full trial unblinding, and must be performed by the principal investigator or site physician responsible for the subject's safety. REQUESTER-AUTHORIZED: the act is authorized directly by the verified treating physician (the requester) — no approval artifact, approver, or quorum — with requester-bound MFA, a documented medical-necessity attestation, and an immediate audit record. The blind is broken for one subject only — other subjects remain blinded and the trial may continue. Regulatory basis: ICH E6(R2) §4.8.2–3, ICH E9 §6.5, 21 CFR Part 11 §11.300, EU Annex 11 §14.",
     "family": "clinical.trial",
     "risk_posture": "critical",
     "ai_risk": "Extreme",
     "gate_flags": {
-      "requires_human_approval": true,
+      "requires_human_approval": false,
       "requires_mfa": true,
       "requires_verified_actor": true,
       "requires_state_snapshot": false,
       "required_assertion_classes": [
-        "identity",
-        "approval"
+        "regulatory",
+        "identity"
       ]
     },
     "authorization_pattern": {
       "type": "human-only",
       "machine_executable": false,
-      "minimum_approvals": 1
+      "minimum_approvals": 0
     },
     "regulatory_mappings": [
       {
@@ -1209,13 +1209,13 @@ export const CANON_ACT_CATALOG: ActSpecEntry[] = [
     ],
     "evidence_requirements": {
       "minimum_pattern": "EP-04",
-      "approval_artifact_required": true,
+      "approval_artifact_required": false,
       "state_snapshot_required": false,
       "required_assertions": [
-        "identity",
-        "approval"
+        "regulatory",
+        "identity"
       ],
-      "approval_meaning_template": "\"I authorize emergency unblinding for subject [SUBJECT_ID] in trial [PROTOCOL_NUMBER] as [ROLE] at [SITE]. Medical emergency: [JUSTIFICATION]. I confirm this disclosure is limited to the assigned treatment for this subject only. SAE reference: [SAE_REF]. Date: [DATE].\"\n",
+      "attestation_meaning_template": "\"I authorize emergency unblinding for subject [SUBJECT_ID] in trial [PROTOCOL_NUMBER] as [ROLE] at [SITE]. Medical emergency: [JUSTIFICATION]. I confirm this disclosure is limited to the assigned treatment for this subject only. SAE reference: [SAE_REF]. Date: [DATE].\"\n",
       "notes": "state_snapshot_required is false for emergency unblinding — the treating physician cannot wait for database lock verification in a medical emergency. The sponsor is notified immediately via the audit trail. The sponsor must assess whether trial integrity is compromised if the unblinded physician continues in a role that could bias data collection; this assessment is out-of-scope for AtlaSent.\n"
     },
     "use_case": "Gate emergency single-subject unblinding behind one cryptographically verified treating physician with MFA and a documented medical justification — so a site can act fast in a medical emergency while still producing a signed, offline-verifiable record scoped to the one subject, with the sponsor notified immediately.",
@@ -1778,6 +1778,990 @@ export const CANON_ACT_CATALOG: ActSpecEntry[] = [
       "saas",
       "enterprise",
       "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0033",
+    "canon_id": "CANON-000030",
+    "slug": "release.create",
+    "display_name": "Release Creation",
+    "description": "Authorization gate for creating an identified, releasable production version — assembling an approved set of changes into a versioned, reproducible release artifact. Release creation is the point where a set of merged changes becomes a candidate for deployment; an unidentified or unapproved release undermines every downstream deploy and audit. State snapshot binding captures the release's content identity (git SHA range, artifact digest, changelog hash) so the permit is bound to exactly what was released.",
+    "family": "production.deploy",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": false,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "role-only",
+      "machine_executable": true
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.8.32 — Change Management",
+        "mapping": "AtlaSent records every release creation with actor identity and the release's content identity, providing the documented authorization ISO 27001 requires before a change set is promoted toward production.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "release_creation_documented_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 CM-3 — Configuration Change Control",
+        "mapping": "Release creation is a controlled configuration event; the permit captures the identified baseline that CM-3 requires be established before deployment.\n",
+        "evidence_source": "permit_record",
+        "status_query": "release_baseline_permit_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": false,
+      "state_snapshot_required": true,
+      "notes": "The state snapshot should capture the release's content identity — the commit range, the built artifact digest(s), and a hash of the generated changelog — so the release is reproducible and the permit is bound to it.\n"
+    },
+    "use_case": "Bind every production release to a tamper-evident permit capturing exactly what was released — commit range, artifact digest, changelog — so a deploy can only proceed from an identified, authorized release, and auditors can reconstruct any release's content.",
+    "industries": [
+      "saas",
+      "fintech",
+      "healthtech",
+      "enterprise",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0034",
+    "canon_id": "CANON-000031",
+    "slug": "production.rollback",
+    "display_name": "Production Rollback",
+    "description": "Authorization gate for rolling back a production deployment to a prior version. A rollback is itself a production change — it can restore a version with a known vulnerability, revert a data-affecting migration, or mask an unresolved incident — and must be governed, not treated as an exempt safety valve. State snapshot binding captures the current and target versions so the permit records exactly what state the system was moved to.",
+    "family": "production.deploy",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": false,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "role-only",
+      "machine_executable": true
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.8.32 — Change Management",
+        "mapping": "A rollback is a change to production. AtlaSent records it with actor identity and the from/to versions, providing the same documented authorization ISO 27001 requires for any production change.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "rollback_documented_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 CM-3 — Configuration Change Control",
+        "mapping": "Rollbacks are configuration changes under CM-3; the permit captures the authorized target baseline the system was reverted to.\n",
+        "evidence_source": "permit_record",
+        "status_query": "rollback_target_permit_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": false,
+      "state_snapshot_required": true,
+      "notes": "The state snapshot should capture the version being rolled back FROM and the version rolled back TO (image digests or release ids), plus the triggering reason. This makes a rollback that restores a vulnerable version auditable after the fact.\n"
+    },
+    "use_case": "Govern rollbacks like the production changes they are — a signed permit recording who rolled back what, from which version to which, and why — so a rollback that restores a vulnerable build or reverts a migration is never an untracked event.",
+    "industries": [
+      "saas",
+      "fintech",
+      "healthtech",
+      "enterprise",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0035",
+    "canon_id": "CANON-000032",
+    "slug": "database.migrate",
+    "display_name": "Database Migration",
+    "description": "Authorization gate for executing a schema or data migration against a production database. Migrations are among the hardest-to-reverse production changes — a bad migration can corrupt or drop data, lock tables, or leave the schema in an inconsistent state — and carry strong change-control and record-integrity evidence demands under SOX and GxP. Human approval plus a state snapshot binding the migration's content hash gate the action to a reviewed, identified migration.",
+    "family": "infrastructure.change",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "sox",
+        "clause": "SOX §404 — Management Assessment of Internal Controls",
+        "mapping": "Migrations to systems processing financial data are change-management events. AtlaSent captures a permit with named approver, the migration's content hash, and timestamp — satisfying PCAOB AS 2201 change-control evidence for database changes.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "db_migration_change_control_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.8.32 — Change Management",
+        "mapping": "A migration permit is the documented authorization ISO 27001 requires before a change alters production data structures.\n",
+        "evidence_source": "permit_record",
+        "status_query": "db_migration_permit_coverage"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 CM-3 — Configuration Change Control",
+        "mapping": "Database migrations are controlled configuration changes; AtlaSent enforces the approval and documentation of CM-3 at execution time.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "cm3_db_migration_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": true,
+      "state_snapshot_required": true,
+      "notes": "The state snapshot should capture a hash of the migration content (the DDL/DML or migration file digest) and the target database identity, binding the permit to exactly what was migrated. Approval artifact records the reviewing DBA/owner.\n"
+    },
+    "use_case": "Gate every production database migration behind an approved, content-bound permit — proving the migration that ran is the migration a qualified owner reviewed, with an offline-verifiable record for SOX and GxP change-control evidence.",
+    "industries": [
+      "fintech",
+      "healthtech",
+      "saas",
+      "enterprise",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0036",
+    "canon_id": "CANON-000033",
+    "slug": "infrastructure.change",
+    "display_name": "Infrastructure Change",
+    "description": "Authorization gate for changing production infrastructure or its configuration — applying Terraform/Helm, altering gateway routing, and changing network controls (WAF rules, security groups, ingress, DNS, load balancers). Infrastructure changes carry broad blast radius: a routing or firewall change can expose or sever production traffic across all services. Human approval plus a state snapshot binding the planned change (plan hash) gate the action to a reviewed, identified change. Production network-control changes are governed under this action.",
+    "family": "infrastructure.change",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.8.32 — Change Management",
+        "mapping": "AtlaSent records every production infrastructure change with actor identity, approver, and the planned change identity — the documented authorization ISO 27001 requires before infrastructure is altered.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "infra_change_control_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 CM-3 — Configuration Change Control",
+        "mapping": "Infrastructure and network-control changes are controlled configuration events; AtlaSent enforces CM-3 approval and documentation at apply time.\n",
+        "evidence_source": "permit_record",
+        "status_query": "cm3_infra_change_pct"
+      },
+      {
+        "framework": "pci_dss",
+        "clause": "PCI DSS v4.0 Req. 1 — Install and Maintain Network Security Controls",
+        "mapping": "Changes to firewalls, security groups, and ingress are network-security-control changes. The permit provides the authorized, documented record PCI DSS requires for network-control modifications.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "network_control_change_permit_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": true,
+      "state_snapshot_required": true,
+      "notes": "The state snapshot should capture the plan identity — a Terraform plan hash, Helm release digest, or a hash of the network-control rule diff — binding the permit to exactly what was applied. Approval artifact records the reviewer.\n"
+    },
+    "use_case": "Gate every production infrastructure and network-control change behind an approved, plan-bound permit — proving the change that applied is the change that was reviewed, with an offline-verifiable record for change-management and PCI network-control evidence.",
+    "industries": [
+      "saas",
+      "fintech",
+      "healthtech",
+      "enterprise",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0037",
+    "canon_id": "CANON-000034",
+    "slug": "feature.enable",
+    "display_name": "Feature Enablement",
+    "description": "Authorization gate for enabling a high-impact feature flag in production. A feature flag flip is a de-facto production change — it can expose an unfinished feature, change data-handling behavior, or shift load — without going through a deploy. This action gates the enablement of flags marked high-impact to an authorized role, so a flag flip carries the same accountability as a deploy while staying a lightweight, standard-risk operation.",
+    "family": "production.deploy",
+    "risk_posture": "standard",
+    "ai_risk": "Medium",
+    "gate_flags": {
+      "requires_human_approval": false,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "role-only",
+      "machine_executable": true
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.8.32 — Change Management",
+        "mapping": "Enabling a high-impact feature flag is a production change. AtlaSent records it with actor identity and the flag identity — the documented authorization ISO 27001 expects for behavior-changing production events.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "feature_enable_documented_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-01",
+      "approval_artifact_required": false,
+      "state_snapshot_required": false,
+      "notes": "The evaluate context should carry the flag key and the target environment, so every high-impact enablement is attributable to an actor and a flag. Low-impact flags need not be routed through this gate — reserve it for flags marked high-impact.\n"
+    },
+    "use_case": "Make every high-impact feature flip in production attributable — a signed record of who enabled which flag, when — so a flag change that alters behavior or exposes an unfinished feature is never an anonymous, untracked event.",
+    "industries": [
+      "saas",
+      "fintech",
+      "enterprise",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0038",
+    "canon_id": "CANON-000035",
+    "slug": "secret.rotate",
+    "display_name": "Secret Rotation",
+    "description": "Authorization gate for rotating a production credential or signing key — API keys, database passwords, service tokens, or signing material. Rotation is a privileged operation: a botched or malicious rotation can cause a widespread outage (every consumer of the old secret breaks) or, worse, hand an attacker fresh valid credentials. State snapshot binding captures the secret identity and key version so the permit records exactly which secret was rotated to which version.",
+    "family": "privileged.operation",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": false,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "role-only",
+      "machine_executable": true
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.5.17 — Authentication Information",
+        "mapping": "AtlaSent records every production secret rotation with actor identity and the secret/key version — the documented control ISO 27001 expects over authentication information and its lifecycle.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "secret_rotation_documented_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 IA-5 — Authenticator Management",
+        "mapping": "Rotation is an authenticator-management event; the permit captures the authorized actor and the rotated secret's identity, evidencing IA-5 lifecycle control.\n",
+        "evidence_source": "permit_record",
+        "status_query": "ia5_rotation_permit_pct"
+      },
+      {
+        "framework": "pci_dss",
+        "clause": "PCI DSS v4.0 Req. 3 — Protect Stored Account Data (key management)",
+        "mapping": "Cryptographic key rotation is a PCI key-management event. AtlaSent provides the authorized, documented record PCI requires for key-lifecycle operations.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "key_rotation_permit_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": false,
+      "state_snapshot_required": true,
+      "notes": "The state snapshot should capture the secret identity (name/ARN, not the value) and the resulting key version or fingerprint. Never place the secret value in the context — only its identity and version.\n"
+    },
+    "use_case": "Gate every production secret and signing-key rotation behind a permit that records who rotated which secret to which version — so a rotation that breaks production or provisions attacker-controlled credentials is never an untracked event, with offline-verifiable evidence for key-management compliance.",
+    "industries": [
+      "fintech",
+      "saas",
+      "healthtech",
+      "enterprise",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0039",
+    "canon_id": "CANON-000036",
+    "slug": "traffic.failover",
+    "display_name": "Traffic Failover",
+    "description": "Authorization gate for failing over production traffic — transferring live traffic to a standby region, cluster, or provider to preserve availability. A failover is a first-class operational action with its own intent (preserve availability), evidence, and risk profile: it can move traffic to an under-capacity or stale standby, split-brain a stateful system, or mask a regional dependency failure. State snapshot binding captures the pre-failover topology and the failover target so the permit records exactly where traffic was moved.",
+    "family": "infrastructure.change",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": false,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "role-only",
+      "machine_executable": true
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.8.14 — Redundancy of Information Processing Facilities",
+        "mapping": "AtlaSent documents every deliberate traffic failover with actor identity and the source/ target topology — evidencing the availability-management controls ISO 27001 expects over redundant processing facilities.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "failover_documented_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 CP-10 — System Recovery and Reconstitution",
+        "mapping": "Failover is a recovery/continuity action; the permit captures the authorized actor and the target the system was failed over to, evidencing CP-10 continuity operations.\n",
+        "evidence_source": "permit_record",
+        "status_query": "cp10_failover_permit_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": false,
+      "state_snapshot_required": true,
+      "notes": "The state snapshot should capture the source and target (region/cluster/provider), the triggering reason, and the standby's readiness signal at failover time — so a failover to a stale or under-capacity standby is auditable after the fact.\n"
+    },
+    "use_case": "Govern traffic failover as the first-class operational action it is — a signed permit recording who failed over what, from where to where, and why — so a failover to a stale or under-capacity standby is never an untracked event, with offline-verifiable continuity evidence.",
+    "industries": [
+      "saas",
+      "fintech",
+      "healthtech",
+      "enterprise",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0040",
+    "canon_id": "CANON-000037",
+    "slug": "host.isolate",
+    "display_name": "Host Isolation",
+    "description": "Authorization gate for network-isolating a compromised host or endpoint as an incident containment action — cutting a machine off from the network (EDR quarantine, security-group lockdown, NAC quarantine) to stop lateral movement or exfiltration while preserving it for forensics. Host isolation is a distinct operational action: unlike a generic infrastructure change it is taken under incident pressure by a reliability or security responder, targets a single host, and its evidence is the containment record — who isolated what, when, and why. State snapshot binding captures the host state at isolation time for the forensic timeline.",
+    "family": "infrastructure.change",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": false,
+      "requires_mfa": false,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "role-only",
+      "machine_executable": true
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 IR-4 — Incident Handling",
+        "mapping": "AtlaSent records every host isolation with a verified responder identity, the target host, and the containment reason — the documented, attributable containment action IR-4 requires during incident response.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "host_isolation_documented_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.5.26 — Response to Information Security Incidents",
+        "mapping": "The isolation permit is the evidence ISO 27001 expects that a containment action was authorized and attributable when it was taken.\n",
+        "evidence_source": "permit_record",
+        "status_query": "containment_permit_coverage"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": false,
+      "state_snapshot_required": true,
+      "notes": "The state snapshot should capture the host identifier, its network state at isolation time (active connections, VLAN/security-group), and the triggering reason or detection — so the containment and its justification are auditable in the incident timeline.\n"
+    },
+    "use_case": "Gate every host isolation behind a permit that records a verified responder, the target host, and the reason — so a containment action taken under incident pressure is attributable and offline-verifiable, and an attacker or compromised automation cannot quietly isolate (or fail to isolate) hosts without a trace.",
+    "industries": [
+      "saas",
+      "fintech",
+      "healthtech",
+      "enterprise",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0041",
+    "canon_id": "CANON-000038",
+    "slug": "protocol.amend",
+    "display_name": "Clinical Protocol Amendment",
+    "description": "Authorization gate for amending the protocol of an active clinical trial — a regulated governance event, not a workflow step. A protocol amendment changes the governing document of a trial and cannot take effect without IRB/EC approval, sponsor authorization, and, for substantial amendments, regulatory notification or approval. It carries distinct authorization (independent, credentialed sign-off) and distinct evidence (the amendment, the approvals, the version) from any routine change. State snapshot binding captures the amendment's content and version so the permit is bound to exactly what was approved.",
+    "family": "clinical.trial",
+    "risk_posture": "critical",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": [
+        "regulatory"
+      ]
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "ich_e6_gcp",
+        "clause": "ICH E6(R2) §4.5 — Compliance with Protocol / §3.3 (IRB/IEC)",
+        "mapping": "A protocol amendment requires documented IRB/EC approval before implementation. AtlaSent binds the amendment permit to the approval and the amended version — the authorized, attributable record GCP requires that the change was sanctioned before it took effect.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "protocol_amendment_approval_pct"
+      },
+      {
+        "framework": "cfr_part_11",
+        "clause": "21 CFR 312.30 — IND Protocol Amendments",
+        "mapping": "Substantial protocol changes require submission to the IND. The permit captures the sponsor authorization and the amendment identity, evidencing the controlled amendment process 21 CFR 312.30 requires.\n",
+        "evidence_source": "permit_record",
+        "status_query": "ind_protocol_amendment_pct"
+      },
+      {
+        "framework": "eu_annex_11",
+        "clause": "EU Annex 11 §1 (Risk Management) / Clinical Trials Regulation substantial modifications",
+        "mapping": "A substantial modification to a trial protocol is a controlled, authorized change. AtlaSent provides the documented authorization and version binding expected for it.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "substantial_modification_permit_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-05",
+      "approval_artifact_required": true,
+      "state_snapshot_required": true,
+      "required_assertions": [
+        "regulatory"
+      ],
+      "notes": "The state snapshot should capture the amendment content hash and the new protocol version; the approval artifact records the authorizing sponsor/regulatory role; the regulatory assertion attests that IRB/EC approval (and, for substantial amendments, regulatory notification) is on file.\n"
+    },
+    "use_case": "Gate every clinical protocol amendment behind an approved, version-bound permit with a regulatory assertion — proving the amendment that took effect is the amendment a sponsor and IRB/EC approved, with an offline-verifiable record for GCP inspection readiness.",
+    "industries": [
+      "healthtech",
+      "regulated-industries",
+      "enterprise"
+    ]
+  },
+  {
+    "id": "ACT-0042",
+    "canon_id": "CANON-000039",
+    "slug": "employment.terminate",
+    "display_name": "Employment Termination",
+    "description": "Authorization gate for terminating the employment relationship of a worker — the consequential employment-status decision, not the downstream technical deprovision. Ending employment carries distinct legal, final-pay, benefits, and works-council consequences that access.revoke (CANON-000008) does not: access revocation is the required EFFECT of a termination, while the decision to end the relationship is its CAUSE. Independent, credentialed sign-off (manager + HR business partner / employment counsel) and a verified actor gate the action to a reviewed, attributable authority, with a captured reason for the record.",
+    "family": "people.operations",
+    "risk_posture": "critical",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 PS-4 — Personnel Termination",
+        "mapping": "PS-4 requires that, upon termination, access is disabled and the action is documented and attributable. AtlaSent binds the termination decision to a named authorizing role and a verified actor before the deprovision runs — the authorized, evidenced record PS-4 expects.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "employment_termination_authorization_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.6.5 — Responsibilities after termination or change of employment",
+        "mapping": "A termination must be a controlled, authorized event with responsibilities discharged. AtlaSent supplies the documented authorization and the offline-verifiable record that the employment change was sanctioned by an appropriate authority.\n",
+        "evidence_source": "permit_record",
+        "status_query": "termination_controlled_change_pct"
+      },
+      {
+        "framework": "sox",
+        "clause": "SOX §404 — segregation of duties over the employment/payroll decision",
+        "mapping": "For roles with financial-reporting responsibility, ending employment is a controlled change with a payroll consequence. AtlaSent enforces independent approval (requester != sole authority) at execution time, evidencing the segregation of duties §404 expects.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "termination_sod_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-05",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "notes": "The approval artifact records the co-approving HR/legal authority; the verified actor binds the decision to a real individual; a captured reason (§ reason-for-change) is folded into the signed audit event. Retention follows the employment-record regime (often years post-termination), above the 90-day permit floor.\n"
+    },
+    "use_case": "Gate every employment termination behind an independently-approved, verified permit — proving the decision to end an employment relationship was authorized by a real HR/legal authority, with an offline-verifiable record for an employment tribunal, works council, or SOX reviewer.",
+    "industries": [
+      "enterprise",
+      "saas",
+      "fintech",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0043",
+    "canon_id": "CANON-000040",
+    "slug": "compensation.change",
+    "display_name": "Compensation Change",
+    "description": "Authorization gate for changing an employee's compensation — a SOX-controlled financial event with an approval chain and a downstream payroll disbursement consequence, distinct from a generic data.modify (CANON-000004) record edit. A compensation change alters a recurring financial obligation and is a recognized fraud and control surface. Independent approval (the requesting manager is not the sole authority) and a verified actor gate the action to a reviewed, attributable decision.",
+    "family": "people.operations",
+    "risk_posture": "high",
+    "ai_risk": "Medium",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "sox",
+        "clause": "SOX §404 — Management Assessment of Internal Controls (payroll / compensation)",
+        "mapping": "A compensation change is a change to a recurring financial obligation. AtlaSent captures a permit with the independent approver, the verified actor, and timestamp — the ICFR evidence §404 expects for payroll-affecting changes.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "compensation_change_control_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+        "mapping": "The requester of a compensation change cannot be its sole approver. AtlaSent enforces the separation of duties AC-5 requires at execution time, with an attributable record.\n",
+        "evidence_source": "permit_record",
+        "status_query": "compensation_sod_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+        "mapping": "Conflicting duties over a financial change are separated. AtlaSent provides the documented, independent authorization ISO 27001 expects before a compensation change takes effect.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "compensation_segregation_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "notes": "The approval artifact records the independent compensation/HR approver; the verified actor binds the change to a real individual. Retention follows the payroll/financial-record regime (commonly multi-year), above the 90-day permit floor.\n"
+    },
+    "use_case": "Gate every compensation change behind an independently-approved, verified permit — proving each pay change was authorized by a real, separate authority, with an offline-verifiable record for a SOX payroll-controls review.",
+    "industries": [
+      "enterprise",
+      "fintech",
+      "saas",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0044",
+    "canon_id": "CANON-000041",
+    "slug": "journal.post",
+    "display_name": "Journal Entry Posting",
+    "description": "Authorization gate for posting a journal entry to the general ledger — a COMMIT of an immutable financial record, distinct from a data.modify (CANON-000004) value edit. A posted journal entry cannot be edited, only reversed by a new entry, and carries its own preparer/poster segregation of duties and SOX ICFR evidence demand. Independent approval (the preparer is not the poster) and a state snapshot binding the entry's content hash gate the action to a reviewed, identified posting, so the entry that lands in the ledger is the entry that was approved.",
+    "family": "finance.controllership",
+    "risk_posture": "high",
+    "ai_risk": "Medium",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "four-eyes",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "sox",
+        "clause": "SOX §404 — Management Assessment of Internal Controls (manual journal entries)",
+        "mapping": "Manual journal entries are a primary ICFR control point. AtlaSent captures a permit with the independent poster, the entry's content hash, and timestamp — the preparer/poster segregation-of-duties evidence §404 and PCAOB AS 2201 expect for GL postings.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "journal_entry_control_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+        "mapping": "The preparer of a journal entry cannot be its poster. AtlaSent enforces the separation of duties AC-5 requires at execution time, bound to the entry content.\n",
+        "evidence_source": "permit_record",
+        "status_query": "journal_sod_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+        "mapping": "Conflicting duties over a committed financial record are separated. AtlaSent provides the documented, independent authorization and the content-bound permit ISO 27001 expects.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "journal_segregation_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": true,
+      "state_snapshot_required": true,
+      "notes": "The state snapshot should capture a hash of the journal-entry body (lines, accounts, amounts) and the ledger/period identity, binding the permit to exactly what posted. The approval artifact records the independent poster. Retention follows the SOX financial-record regime (commonly 7 years), above the 90-day permit floor.\n"
+    },
+    "use_case": "Gate every manual journal-entry posting behind an independently-approved, content-bound permit — proving the entry that committed to the ledger is the entry a separate authority approved, with an offline-verifiable record for a SOX ICFR review.",
+    "industries": [
+      "fintech",
+      "enterprise",
+      "saas",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0045",
+    "canon_id": "CANON-000042",
+    "slug": "period.close",
+    "display_name": "Accounting Period Close",
+    "description": "Authorization gate for closing (locking) an accounting period — the state-changing COMMIT that freezes the general ledger for a fiscal period so no further entries post to it. This is an EXECUTION action, distinct from the attestations it consumes: reconciliation certification (compliance.certify) and journal-entry approval (workflow.approve) prove READINESS, but closing the period is the separately-authorized, separately-recorded operational act that has its own consequence. Merging it into the certification would collapse \"the reconciliations are certified and approvals exist\" into \"the period is closed\" — two different points in the control chain. The close cannot reach allow unless all reconciliations are certified and dual approval is on file, and it binds a state snapshot of the period's closing state, so the period that locks is the period whose readiness was authorized.",
+    "family": "finance.controllership",
+    "risk_posture": "high",
+    "ai_risk": "Medium",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "four-eyes",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "sox",
+        "clause": "SOX §404 — Management Assessment of Internal Controls (period-end financial reporting)",
+        "mapping": "The period-end close is a primary ICFR control point. AtlaSent captures a permit binding the dual authorization, the certified-reconciliation state, and the period identity — evidence that the close was executed only after readiness was independently certified, distinct from the certification itself, as §404 and PCAOB AS 2201 expect for the period-end close process.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "period_close_control_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+        "mapping": "The authority that certifies a period ready is separated from the authority that executes the close. AtlaSent enforces at execution time that closing the period is a distinct, dual-approved act, not an automatic consequence of certification.\n",
+        "evidence_source": "permit_record",
+        "status_query": "period_close_sod_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+        "mapping": "Certifying readiness and executing the consequential close are separated. AtlaSent provides the documented, independent authorization and the period-bound permit ISO 27001 expects for a state-changing financial operation.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "period_close_segregation_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": true,
+      "state_snapshot_required": true,
+      "notes": "The state snapshot should capture the period identity and the readiness state it consumes — that all reconciliations were certified and dual approval was on file at the moment of close — binding the permit to exactly the period and state that locked. The approval artifact records the independent close authorization. Retention follows the SOX financial-record regime (commonly 7 years), above the 90-day permit floor.\n"
+    },
+    "use_case": "Gate every accounting-period close behind a dual-authorized, readiness-bound permit — proving the period that locked was closed by a separate authority only after its reconciliations were certified and approvals were on file, with an offline-verifiable record that a SOX ICFR review can test the close control on independently of the certifications it consumes.",
+    "industries": [
+      "fintech",
+      "enterprise",
+      "saas",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0046",
+    "canon_id": "CANON-000043",
+    "slug": "trial.biomarker.reclassify",
+    "display_name": "Biomarker Result Reclassification Approval",
+    "description": "Authorization gate for approving and releasing a corrected or reinterpreted biomarker result in a genomics-enabled clinical trial — a previously reported genomic or biomarker call being revised (e.g. a variant reclassified from VUS to pathogenic, a corrected HER2/EGFR status, or a re-adjudicated companion-diagnostic result). AtlaSent protects the AUTHORIZATION of the consequential change; it does not perform the scientific interpretation — the scientific basis comes from the laboratory method, the classification criteria, the protocol's context of use, and the designated authority. The gate requires authorized reviewers, supporting source evidence, a stated reason for change, the applicable study and laboratory criteria, and a traceable record of the prior and revised classification. A reported result is trial data of record; revising it can change a subject's eligibility, arm assignment, or safety profile, so it cannot be a silent overwrite. It must be attributable to a cryptographically verified qualified reviewer (a self-asserted actor_id from a LIS/LIMS is not sufficient), and no automated pipeline may reclassify a reported result on its own. Regulatory basis: 21 CFR Part 11 §11.10(b)/(e) (change-record and audit trail — not the scientific validity of the reclassification), ICH E6(R2) §5.5.3, ALCOA+, ICH E9 §5.",
+    "family": "clinical.trial",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": [
+        "identity",
+        "regulatory"
+      ]
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false,
+      "minimum_approvals": 1
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "cfr_part_11",
+        "clause": "21 CFR Part 11 §11.10(e) — Reason for Change",
+        "mapping": "The reason for reclassifying the biomarker result is captured with the reviewer's verified identity and a timestamp in the signed audit event; the original reported result is preserved rather than overwritten.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "biomarker_reclassification_reason_pct"
+      },
+      {
+        "framework": "cfr_part_11",
+        "clause": "21 CFR Part 11 §11.10(b) — Accurate and Complete Copies",
+        "mapping": "A state snapshot binds the pre-reclassification result value into the permit (cdo_hash), providing the accurate copy of the record as it stood before the change.\n",
+        "evidence_source": "permit_record",
+        "status_query": "biomarker_reclassification_snapshot_pct"
+      },
+      {
+        "framework": "ich_e6_gcp",
+        "clause": "ICH E6(R2) §5.5.3 — Electronic Data Handling / Audit Trail",
+        "mapping": "Every reclassification writes an immutable, attributable audit-chain entry naming the qualified reviewer, the trial, the assay, and the prior and new call.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "biomarker_reclassification_audit_pct"
+      },
+      {
+        "framework": "gxp_general",
+        "clause": "ICH E9 §5 — Data Handling / Integrity of Trial Results",
+        "mapping": "Reclassification requires a verified human reviewer and an approval artifact, so a genomic call that changes a subject's eligibility or analysis set is never altered by an automated process without attributable human authorization.\n",
+        "evidence_source": "evaluation_record",
+        "status_query": "biomarker_reclassification_human_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-03",
+      "approval_artifact_required": true,
+      "state_snapshot_required": true,
+      "required_assertions": [
+        "identity",
+        "regulatory"
+      ],
+      "notes": "The state snapshot captures the prior reported result value at authorization time and binds it into the permit, so the audit record proves exactly what the call was before the reclassification and who authorized the change.\n"
+    },
+    "use_case": "Gate the approval and release of a corrected or reinterpreted biomarker/genomic result behind a cryptographically verified qualified reviewer, supporting source evidence, a mandatory reason for change, the applicable study and laboratory criteria, and a preserved original value — so a sponsor can prove to the FDA or EMA that no reported genomic call was ever silently changed, and produce a signed prior/revised record for any reclassification. AtlaSent gates the authorization of the change; the scientific interpretation stays with the laboratory and the protocol's context of use.",
+    "industries": [
+      "pharma",
+      "biotech",
+      "cro",
+      "genomics",
+      "diagnostics"
+    ]
+  },
+  {
+    "id": "ACT-0047",
+    "canon_id": "CANON-000044",
+    "slug": "trial.biomarker.eligibility.override",
+    "display_name": "Biomarker Eligibility Override",
+    "description": "Authorization gate for overriding biomarker-defined eligibility in a genomics-enabled clinical trial — enrolling or retaining a subject whose genomic or biomarker result does not meet the protocol's inclusion/exclusion criteria (e.g. enrolling an EGFR-negative subject into an EGFR-targeted arm, or waiving a companion-diagnostic cutoff). This is a protocol deviation, not a routine screening decision: it changes who receives an investigational product and can affect subject safety and the analysis population. An override requires a documented medical rationale, a cryptographically verified qualified authorizer (medical monitor or principal investigator — a self-asserted actor_id is not sufficient), and an approval; it may not be granted by an automated screening system. Regulatory basis: ICH E6(R2) §4.5 / §4.3, 21 CFR 312.66, ICH E9 §5.2.",
+    "family": "clinical.trial",
+    "risk_posture": "critical",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": [
+        "identity",
+        "regulatory"
+      ]
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false,
+      "minimum_approvals": 1
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "ich_e6_gcp",
+        "clause": "ICH E6(R2) §4.5.3–4 — Compliance with Protocol / Deviations",
+        "mapping": "A deviation from protocol-defined eligibility requires documented medical authorization. AtlaSent binds the override permit to the authorizer's verified identity and rationale — the attributable, pre-hoc record GCP requires for a deviation.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "eligibility_override_authorized_pct"
+      },
+      {
+        "framework": "cfr_part_11",
+        "clause": "21 CFR 312.66 — Assurance of IRB Review / Investigator Obligations",
+        "mapping": "The override decision, its rationale, and the authorizing investigator/monitor are captured in the signed evaluation, evidencing the investigator's control over eligibility deviations.\n",
+        "evidence_source": "evaluation_record",
+        "status_query": "eligibility_override_investigator_pct"
+      },
+      {
+        "framework": "gxp_general",
+        "clause": "ICH E9 §5.2 — Analysis Sets / Protocol Deviations",
+        "mapping": "Because an eligibility override affects the analysis population, it is authorized only by a verified human and recorded immutably, so deviations can be reconstructed for the statistical analysis plan.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "eligibility_override_audit_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-03",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "required_assertions": [
+        "identity",
+        "regulatory"
+      ],
+      "notes": "The override permit binds the authorizer's verified identity and the medical rationale, so the deviation record names who waived which biomarker criterion, for which subject, and why.\n"
+    },
+    "use_case": "Gate overriding a biomarker-defined eligibility criterion behind a cryptographically verified medical monitor or principal investigator with a documented rationale and an approval — so a sponsor can prove that every genomic-eligibility deviation was authorized by a named qualified human before the subject was enrolled, with a signed, offline-verifiable deviation record.",
+    "industries": [
+      "pharma",
+      "biotech",
+      "cro",
+      "genomics"
+    ]
+  },
+  {
+    "id": "ACT-0048",
+    "canon_id": "CANON-000045",
+    "slug": "genomic.data.release",
+    "display_name": "Identifiable Genomic Data Release",
+    "description": "Authorization gate for releasing identifiable genomic data from a genomics-enabled trial — disclosing re-identifiable genomic or genetic data (whole-genome/exome sequences, variant call files, or genotype records tied to a subject) to a recipient such as an investigator, a treating clinician, a biobank, or a research collaborator. Genomic data is inherently re-identifiable and is special-category/genetic data under GDPR Art. 9, GINA, and HIPAA; a release is high-blast-radius and hard to recall. The gate requires a verified human authorizer, a verified consent assertion covering the disclosure, and an approved purpose before a permit is issued; a release outside the consented purpose or without a verified authorizer is denied. Regulatory basis: GDPR Art. 9 / Art. 6, HIPAA §164.508/§164.312(b), GINA (2008), 45 CFR 46.116 (informed consent).",
+    "family": "data.release",
+    "risk_posture": "critical",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": [
+        "consent",
+        "sensitivity",
+        "identity"
+      ]
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false,
+      "minimum_approvals": 1
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "gdpr",
+        "clause": "GDPR Art. 9 — Special Categories / Art. 6 — Lawfulness",
+        "mapping": "Genetic data is special-category data. The release permit binds the verified consent assertion and the lawful purpose, providing the accountability record GDPR requires before disclosing Art. 9 data.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "genomic_release_consent_pct"
+      },
+      {
+        "framework": "hipaa",
+        "clause": "HIPAA §164.508 — Authorization / §164.312(b) — Audit Controls",
+        "mapping": "A disclosure of identifiable genomic PHI is gated on a verified authorization and recorded with a tamper-evident permit naming the authorizer, recipient, and consent scope.\n",
+        "evidence_source": "permit_record",
+        "status_query": "genomic_release_authorization_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.8.15 — Logging / A.5.34 — Privacy & PII",
+        "mapping": "Every identifiable genomic release writes an immutable, attributable audit-chain entry naming the authorizer, recipient, and sensitivity/consent scope.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "genomic_release_audit_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-03",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "required_assertions": [
+        "consent",
+        "sensitivity",
+        "identity"
+      ],
+      "notes": "The consent and sensitivity assertions are bound into the permit so the audit record proves the identifiable genomic release matched a specific consent and stayed within the approved purpose and recipient.\n"
+    },
+    "use_case": "Gate release of identifiable genomic data behind a cryptographically verified authorizer, a verified consent assertion, and an approved purpose — so a sponsor or biobank can prove that every disclosure of re-identifiable genetic data matched a specific subject consent and lawful purpose, with a signed, offline-verifiable release record naming the authorizer and recipient.",
+    "industries": [
+      "pharma",
+      "biotech",
+      "genomics",
+      "biobank",
+      "healthtech"
+    ]
+  },
+  {
+    "id": "ACT-0049",
+    "canon_id": "CANON-000046",
+    "slug": "genomic.data.export",
+    "display_name": "Cross-Border Genomic Data Export",
+    "description": "Authorization gate for exporting genomic data to another organization or jurisdiction in a genomics-enabled trial — transferring genomic or genetic data across an organizational or geographic/legal boundary (to a sponsor abroad, a central sequencing lab in another country, or a partner in a different data-protection regime). A cross-border transfer of genetic data implicates data-residency and international-transfer law on top of consent: GDPR Chapter V (Art. 44–49), data-localization statutes, and jurisdiction-specific genetic-data rules. The gate requires a verified human authorizer, a verified data-residency assertion proving the destination is a permitted jurisdiction with a valid transfer mechanism, a verified consent covering cross-border transfer, and an approved purpose before a permit is issued. A transfer to a disallowed jurisdiction or outside the consented purpose is denied. Regulatory basis: GDPR Art. 44–49, GDPR Art. 9, data-localization statutes, GINA (2008).",
+    "family": "data.release",
+    "risk_posture": "critical",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": [
+        "residency",
+        "consent",
+        "sensitivity"
+      ]
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false,
+      "minimum_approvals": 1
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "gdpr",
+        "clause": "GDPR Art. 44–49 — Transfers of Personal Data to Third Countries",
+        "mapping": "A cross-border transfer of genetic data requires a valid transfer mechanism and a permitted destination. The export permit binds a verified residency assertion naming the destination jurisdiction and transfer basis — the accountability record Chapter V requires.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "genomic_export_residency_pct"
+      },
+      {
+        "framework": "gdpr",
+        "clause": "GDPR Art. 9 — Special Categories (Genetic Data)",
+        "mapping": "The export permit binds the verified consent covering cross-border transfer and the sensitivity scope, evidencing that Art. 9 genetic data left the origin jurisdiction only within its consented and lawful scope.\n",
+        "evidence_source": "permit_record",
+        "status_query": "genomic_export_consent_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.5.34 — Privacy & PII / A.8.15 — Logging",
+        "mapping": "Every cross-border genomic export writes an immutable, attributable audit-chain entry naming the authorizer, destination organization/jurisdiction, and residency/consent scope.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "genomic_export_audit_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-03",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "required_assertions": [
+        "residency",
+        "consent",
+        "sensitivity"
+      ],
+      "notes": "The residency assertion is the load-bearing addition over genomic.data.release — it binds the destination jurisdiction and transfer mechanism into the permit so the audit record proves the cross-border genetic-data transfer stayed within a permitted, lawful scope.\n"
+    },
+    "use_case": "Gate exporting genomic data to another organization or jurisdiction behind a cryptographically verified authorizer, a verified data-residency assertion, a verified consent for cross-border transfer, and an approved purpose — so a sponsor can prove every international transfer of genetic data went to a permitted jurisdiction under a valid transfer mechanism, with a signed, offline-verifiable export record.",
+    "industries": [
+      "pharma",
+      "biotech",
+      "genomics",
+      "cro",
+      "biobank"
     ]
   }
 ];

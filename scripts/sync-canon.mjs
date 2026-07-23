@@ -4,6 +4,12 @@
 //
 //   node scripts/sync-canon.mjs
 //
+// Or point it at an explicit generated/ directory (used by the
+// canon-mirror-drift CI guard, where the source repo is checked out into a
+// subdirectory rather than a sibling):
+//
+//   node scripts/sync-canon.mjs path/to/atlasent/generated
+//
 // Emits (committed, GENERATED-DERIVED):
 //   src/canonCatalog.ts  — the action catalog (with canon_id)
 //   src/canonGraph.ts    — per-action knowledge-graph neighborhood + compliance
@@ -13,10 +19,16 @@
 // MCP server can answer from compiler output instead of guessing.
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const GEN = join(here, "..", "..", "atlasent", "generated");
+// Optional positional arg: the atlasent `generated/` directory. Defaults to a
+// sibling checkout (../atlasent/generated) for local use. The output is
+// identical regardless of source location — only WHERE the Canon is read from
+// changes.
+const GEN = process.argv[2]
+  ? resolve(process.cwd(), process.argv[2])
+  : join(here, "..", "..", "atlasent", "generated");
 
 const spec = JSON.parse(readFileSync(join(GEN, "act-spec-index.json"), "utf8"));
 const graph = JSON.parse(readFileSync(join(GEN, "authorization-graph.json"), "utf8"));

@@ -1,0 +1,101 @@
+name: canon-mirror-drift
+
+# Canon-mirror drift guard (Knowledge-Engine Slice 2).
+#
+# src/canonCatalog.ts and src/canonGraph.ts are GENERATED-DERIVED read-only
+# mirrors of the Action Canon (the source of truth is
+# AtlaSent-Systems-Inc/atlasent: contract/canonical-actions/ACT-*.yaml ->
+# generated/{act-spec-index,authorization-graph}.json, re-emitted here by
+# scripts/sync-canon.mjs). Before this guard, the mirrors carried NO CI gate,
+# so they could silently lag the Canon (they did: 29 vs 46 records, closed by
+# the commit that adds this workflow).
+#
+# The guard checks out the Canon source, re-runs sync-canon.mjs against it, and
+# fails on any diff to the committed mirrors.
+#
+# Cross-repo credential model (mirrors atlasent's realization-index-drift guard):
+#   - The default CI GITHUB_TOKEN is scoped to THIS repo only, so it cannot check
+#     out the private atlasent source. In that case the guard WARN-SKIPS (it does
+#     not fail the build on something it cannot verify).
+#   - Provision a read-only cross-repo credential as the CANON_SOURCES_READ_TOKEN
+#     secret (a GitHub App token or fine-grained PAT with read-only `contents` on
+#     AtlaSent-Systems-Inc/atlasent) to make the guard ENFORCING.
+#   - Set the repo/org variable CANON_MIRROR_DRIFT_STRICT=true (or dispatch with
+#     strict=true) to turn an unreachable source into a hard failure — use only
+#     where the token is guaranteed present.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/canonCatalog.ts'
+      - 'src/canonGraph.ts'
+      - 'scripts/sync-canon.mjs'
+      - '.github/workflows/canon-mirror-drift.yml'
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: 'Fail if the Canon source cannot be checked out'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canon-mirror-drift-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  canon-mirror-drift:
+    runs-on: ubuntu-latest
+    env:
+      STRICT: ${{ github.event.inputs.strict || vars.CANON_MIRROR_DRIFT_STRICT || 'false' }}
+    steps:
+      - name: Checkout mcp-server
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Checkout Action Canon source (atlasent)
+        id: canon_src
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: AtlaSent-Systems-Inc/atlasent
+          path: __canon_src
+          persist-credentials: false
+          token: ${{ secrets.CANON_SOURCES_READ_TOKEN || github.token }}
+
+      - name: Guard — committed Canon mirrors match a fresh sync
+        run: |
+          set -euo pipefail
+
+          if [ "${{ steps.canon_src.outcome }}" != "success" ]; then
+            echo "::warning::Could not check out AtlaSent-Systems-Inc/atlasent (the Canon source of truth)."
+            echo "The default CI token is scoped to this repo; provision the CANON_SOURCES_READ_TOKEN secret"
+            echo "(read-only 'contents' on atlasent) to make this guard enforcing."
+            if [ "${STRICT}" = "true" ]; then
+              echo "::error::STRICT mode: an unreachable Canon source is a failure."
+              exit 1
+            fi
+            echo "Skipping drift check (source unreachable) — not a failure in non-strict mode."
+            exit 0
+          fi
+
+          echo "Regenerating Canon mirrors from __canon_src/generated ..."
+          node scripts/sync-canon.mjs __canon_src/generated
+
+          if ! git diff --exit-code -- src/canonCatalog.ts src/canonGraph.ts; then
+            echo ""
+            echo "::error::Canon mirror is STALE. src/canonCatalog.ts and/or src/canonGraph.ts do not match a"
+            echo "fresh sync from the current Action Canon. Regenerate and commit:"
+            echo "    node scripts/sync-canon.mjs   (from a checkout with ../atlasent present)"
+            echo "    git add src/canonCatalog.ts src/canonGraph.ts && git commit"
+            exit 1
+          fi
+
+          echo "Canon mirrors are in sync with the Action Canon."
