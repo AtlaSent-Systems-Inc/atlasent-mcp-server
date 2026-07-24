@@ -884,7 +884,7 @@ export const ATLAS_NODES: AtlasNode[] = [
   },
   {
     "id": "floqast-pilot",
-    "name": "FloQast Pilot",
+    "name": "Reference Pilot",
     "kind": "pilot",
     "ref": "design partner (prospective)",
     "status": "prospective",
