@@ -108,18 +108,19 @@ Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLAS
 
 ## Disabled Endpoints (atlasent-api)
 
-The following atlasent-api edge functions are intentionally **not deployed** on the runtime project and have **no corresponding MCP tools** in this repo. Do not add MCP tools that call these paths — they will always 404 in production:
+The following atlasent-api edge functions are intentionally **not deployed** on the runtime project and have **no corresponding MCP tools** in this repo. Do not add MCP tools that call these paths — they will always 404 in production. As of 2026-07-11 the disabled set is exactly **3 SSO skeleton handlers** (disabled 2026-06-02, enterprise-tier SSO not yet in pilot scope):
 
 | Function name | Notes |
 |---|---|
-| `v1-redteam-runs` | Red-team evaluation runner — held back from V1 pilot surface |
-| `v1-post-evaluations` | Post-evaluation annotation endpoint — held back |
-| `v1-spiffe-validate` | SPIFFE workload identity validation — held back |
-| `v1-sso` | SSO callback handler — held back |
-| `v1-policy-bundles` | Legacy policy bundle endpoint — held back |
-| `v1-marketplace-packs` | Marketplace action packs — held back |
-| `v1-decisions-stream` | Decision streaming endpoint — held back |
-| `v1-transparency-anchor` | Transparency anchoring endpoint — held back |
+| `v1-sso-assertion-hook` | SSO SAML assertion hook — held back until SSO is in the V1 pilot surface |
+| `v1-sso-providers` | SSO identity-provider management — held back (re-enable with `v1-sso-connections`) |
+| `v1-sso-connections` | SSO connection management CRUD — enterprise tier only |
+
+> **Re-enabled 2026-06-01 — do NOT re-add to the table:** `v1-redteam-runs`,
+> `v1-post-evaluations`, `v1-spiffe-validate`, `v1-policy-bundles`, `v1-marketplace-packs`,
+> `v1-decisions-stream`, `v1-transparency-anchor` are all deployed today and present in
+> `runtime-functions.json`. **`v1-sso` is shipped, not disabled** — it is distinct from the
+> three `v1-sso-*` skeletons above; do not conflate them.
 
 Source of truth: `atlasent-api/supabase/runtime-functions-disabled.json`. The V2 Wave A batch/stream/graphql endpoints (`/v1/evaluate/batch`, `/v1/evaluate/stream`, `/v1/graphql`) are separate from this list and are properly gated at the tenant level (`FeatureNotEnabledError` on 404).
 
