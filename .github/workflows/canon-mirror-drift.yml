@@ -54,7 +54,7 @@ jobs:
       STRICT: ${{ github.event.inputs.strict || vars.CANON_MIRROR_DRIFT_STRICT || 'false' }}
     steps:
       - name: Checkout mcp-server
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -63,7 +63,7 @@ jobs:
       - name: Checkout Action Canon source (atlasent)
         id: canon_src
         continue-on-error: true
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: AtlaSent-Systems-Inc/atlasent
           path: __canon_src
