@@ -145,3 +145,15 @@ See `atlasent-api/docs/runbooks/CRON_VAULT_SECRETS.md` for the full setup proced
 ## npm publishing
 
 Scoped package `@atlasent/mcp-server`, `publishConfig.access: public`. Tag `v*` triggers `publish.yml` which runs build, tests, and `npm publish --provenance` using the `NPM_TOKEN` repo secret.
+
+## MCP Registry publishing
+
+`server.json` (repo root) is the official MCP Registry manifest
+(`io.github.atlasent-systems-inc/mcp-server`). After every successful npm
+publish, `publish-mcp-registry.yml` publishes it to
+registry.modelcontextprotocol.io via `mcp-publisher` with GitHub OIDC (no
+stored secret). **Release checklist addition: bump BOTH version fields in
+`server.json` (top-level and `packages[0].version`) together with
+`package.json`** — the workflow fails closed on a mismatch. First-time
+publication (and re-publishes) can be run manually via workflow_dispatch.
+`smithery.yaml` covers the Smithery directory separately.

@@ -1,0 +1,54 @@
+# Publish server.json to the official MCP Registry
+# (registry.modelcontextprotocol.io) after each npm release.
+#
+# Runs when the "Publish to npm" workflow completes successfully (the
+# registry validates that the npm package version exists, so it must run
+# AFTER npm publish), or manually via workflow_dispatch for the first
+# publication / a re-publish.
+#
+# Auth: GitHub OIDC — the io.github.atlasent-systems-inc/* namespace is
+# owned by this org, so `mcp-publisher login github-oidc` needs no stored
+# secret. Fail-closed: a version mismatch between server.json and
+# package.json aborts before any publish.
+
+name: Publish to MCP Registry
+
+on:
+  workflow_run:
+    workflows: ["Publish to npm"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  publish-registry:
+    runs-on: ubuntu-latest
+    # On workflow_run, only proceed if the npm publish succeeded.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+      id-token: write   # GitHub OIDC login to the MCP registry
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify server.json version matches package.json
+        run: |
+          SRV=$(node -p "require('./server.json').version")
+          SRV_PKG=$(node -p "require('./server.json').packages[0].version")
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$SRV" != "$PKG" ] || [ "$SRV_PKG" != "$PKG" ]; then
+            echo "::error::server.json version ($SRV / package entry $SRV_PKG) != package.json version ($PKG). Bump server.json in the release PR."
+            exit 1
+          fi
+          echo "server.json and package.json agree on $PKG"
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher --version
+
+      - name: Login (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish
