@@ -35,15 +35,35 @@ jobs:
       # ── AtlaSent release gate ────────────────────────────────────────
       # Gate closed: if the permit is not verified the job exits here and
       # nothing builds or publishes.
+      #
+      # Two bugs fixed here (found during a dogfooding audit of consequential
+      # actions AtlaSent's own coding agents can take against AtlaSent's own
+      # infrastructure), neither a policy judgment call -- both mechanical:
+      #   1. `action: production.release` is NOT in atlasent-action's
+      #      GATE_PERMITTED_ACTIONS allowlist (src/canonicalAction.ts:
+      #      production.deploy | package.release | the three trial.* actions
+      #      only). Every real dispatch of this step self-rejected with
+      #      "unsupported protected action" before ever calling the AtlaSent
+      #      API -- fail-closed, but on a typo, not a real policy check.
+      #      `package.release` is the canonical "publish a package" action
+      #      (atlasent-action's own release.yml, atlasent-sdk's 13 npm/PyPI
+      #      publish gates, atlasent-api's seed_package_release_bundle()).
+      #   2. No `api-url` / `ATLASENT_BASE_URL` was set, so this fell back to
+      #      atlasent-action's built-in default (api.atlasent.io/functions/v1)
+      #      -- a custom apex other repos' own gate scripts flag as unproven
+      #      ("only once the apex CDN forwards /v1-* paths"). Pointing
+      #      directly at the runtime project's Supabase URL, matching every
+      #      other gate wired this audit.
       - name: AtlaSent release gate
         uses: atlasent-systems-inc/atlasent-action@v1
         env:
           ATLASENT_API_KEY: ${{ secrets.ATLASENT_API_KEY }}
         with:
-          action: production.release
+          action: package.release
           actor: ${{ github.actor }}
           environment: production
-          context: '{"ref": "${{ github.ref }}", "repo": "${{ github.repository }}"}'  
+          api-url: https://kttccumlnmdtupgbyfue.supabase.co/functions/v1
+          context: '{"ref": "${{ github.ref }}", "repo": "${{ github.repository }}"}'
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
