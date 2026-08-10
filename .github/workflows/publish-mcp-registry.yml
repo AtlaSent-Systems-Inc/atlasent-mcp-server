@@ -27,8 +27,35 @@ jobs:
     permissions:
       contents: read
       id-token: write   # GitHub OIDC login to the MCP registry
+      pull-requests: read
+      statuses: write
     steps:
       - uses: actions/checkout@v7
+
+      # ── AtlaSent publish gate ────────────────────────────────────────
+      # Dogfooding fix: this workflow published server.json to the official
+      # MCP Registry with no AtlaSent evaluate/permit gate at all. Running
+      # automatically after "Publish to npm" succeeds does NOT inherit that
+      # workflow's gate -- workflow_run is a separate execution context, and
+      # workflow_dispatch here bypasses the upstream gate entirely. Found
+      # during a dogfooding audit of consequential actions AtlaSent's own
+      # coding agents can take against AtlaSent's own infrastructure.
+      #
+      # Same action type and api-url as the corrected publish.yml gate
+      # (package.release, pointed directly at the runtime project) -- this is
+      # the same category of action (publishing this package's identity to a
+      # public registry), just a second registry.
+      - name: AtlaSent publish gate
+        id: atlasent_gate
+        uses: atlasent-systems-inc/atlasent-action@v1
+        env:
+          ATLASENT_API_KEY: ${{ secrets.ATLASENT_API_KEY }}
+        with:
+          action: package.release
+          actor: ${{ github.actor }}
+          environment: production
+          api-url: https://kttccumlnmdtupgbyfue.supabase.co/functions/v1
+          context: '{"ref": "${{ github.ref }}", "repo": "${{ github.repository }}", "artifact": "mcp-registry"}'
 
       - name: Verify server.json version matches package.json
         run: |
