@@ -1,20 +1,13 @@
 AtlaSent MCP Server
-Copyright (c) 2025 AtlaSent Systems Inc.
+Copyright (c) 2026 AtlaSent IP Holdings LLC
 
-LICENSING
----------
-This software is licensed under the MIT License.
+This software is licensed under the Apache License, Version 2.0.
 See LICENSE for the full license text.
 
-ATTRIBUTION
------------
-This MCP Server integrates with the AtlaSent governance platform via the
-Model Context Protocol. The AtlaSent core runtime is governed by the
-AtlaSent Software License 1.0. This MCP server (the developer-facing
-integration) is fully open-source.
+This MCP Server integrates with the AtlaSent execution-time authorization
+platform via the Model Context Protocol. This repository is the public,
+developer-facing MCP integration and is distributed under Apache-2.0.
 
-For commercial licensing of core infrastructure: licensing@atlasent.io
-
-TRADEMARKS
-----------
 "AtlaSent" and the AtlaSent logo are trademarks of AtlaSent Systems Inc.
+
+Commercial inquiries: legal@atlasent.io
