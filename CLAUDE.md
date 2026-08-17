@@ -113,8 +113,8 @@ The following atlasent-api edge functions are intentionally **not deployed** on 
 | Function name | Notes |
 |---|---|
 | `v1-sso-assertion-hook` | SSO SAML assertion hook — held back until SSO is in the V1 pilot surface |
-| `v1-sso-providers` | SSO identity-provider management — held back (re-enable with `v1-sso-connections`) |
-| `v1-sso-connections` | SSO connection management CRUD — enterprise tier only |
+| `v1-sso-providers` | SSO identity-provider management — held back. Its notes previously said "re-enable with `v1-sso-connections`" — that cross-reference is stale as of 2026-08-10 since `v1-sso-connections` is now quarantined, not a re-enable target |
+| `v1-sso-connections` | **QUARANTINED 2026-08-10** (SSO Configuration Authority remediation) — not merely held back for scope. Had a real table-mismatch bug: POST/GET wrote/read `sso_connections` while GET /:id, PATCH, DELETE operated on `identity_providers`. `v1-sso` (shipped, live) already implements this resource correctly. Do not re-enable without a redesign |
 
 > **Re-enabled 2026-06-01 — do NOT re-add to the table:** `v1-redteam-runs`,
 > `v1-post-evaluations`, `v1-spiffe-validate`, `v1-policy-bundles`, `v1-marketplace-packs`,
