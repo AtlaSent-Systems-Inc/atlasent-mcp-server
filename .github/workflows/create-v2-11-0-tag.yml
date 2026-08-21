@@ -20,7 +20,37 @@ jobs:
           PKG=$(node -p "require('./package.json').version")
           [ "$PKG" = "2.11.0" ] || (echo "Expected 2.11.0, got $PKG" && exit 1)
 
+      # ── AtlaSent tag gate ────────────────────────────────────────────
+      # Dogfooding fix: this workflow pushed a real, permanent git tag
+      # (`v2.11.0`) with no AtlaSent evaluate/permit gate at all. Lower
+      # severity than most findings from this audit -- pushing this tag is
+      # exactly the `on: push: tags: ["v*"]` trigger condition for
+      # publish.yml, which already gates the actual npm publish behind its
+      # own verified AtlaSent gate. So this isn't "ungated npm publish", it's
+      # "ungated creation of a git tag that happens to trigger something
+      # else that IS gated" -- but an unauthorized/unintended tag push is
+      # itself a real action (a public, permanent git ref others may
+      # reference) even before anything downstream runs, so it gets the same
+      # defense-in-depth treatment.
+      #
+      # Same action type and api-url as publish.yml / publish-mcp-registry.yml
+      # (package.release, pointed directly at the runtime project) -- this is
+      # the same category of action (releasing this package's identity),
+      # just the tag-creation step of it.
+      - name: AtlaSent tag gate
+        id: atlasent_gate
+        uses: atlasent-systems-inc/atlasent-action@v1
+        env:
+          ATLASENT_API_KEY: ${{ secrets.ATLASENT_API_KEY }}
+        with:
+          action: package.release
+          actor: ${{ github.actor }}
+          environment: production
+          api-url: https://kttccumlnmdtupgbyfue.supabase.co/functions/v1
+          context: '{"ref": "${{ github.ref }}", "repo": "${{ github.repository }}", "artifact": "git-tag", "tag": "v2.11.0"}'
+
       - name: Create v2.11.0 tag
+        if: steps.atlasent_gate.outputs.verified == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
