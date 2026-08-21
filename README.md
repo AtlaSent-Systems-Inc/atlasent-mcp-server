@@ -55,7 +55,7 @@ production.deploy
 agent.tool.invoke
 ```
 
-For a generic AI tool invocation, use `agent.tool.invoke` as the Action Type and carry tool-specific facts—tool name, target, environment, arguments/payload digest, resource state, and other required context—in the authorization context or binding fields supported by the selected integration path.
+For a generic AI tool invocation, use `agent.tool.invoke` as the public Canon-backed Action Type and carry tool-specific facts—tool name, target, environment, arguments/payload digest, resource state, and other required context—in the authorization context or binding fields supported by the selected integration path.
 
 Use the read-only `atlasent_lookup_action` tool to discover Canon-backed Action Types instead of inventing a parallel taxonomy.
 
@@ -81,12 +81,14 @@ A human Approval, favorable risk signal, policy match, deployment ticket, or wor
 
 ```text
 agent requests deploy_service
-  → authorize agent.tool.invoke
-  → verify agent-tool Permit
+  → authorize internal agent-tool compatibility gate
+  → verify outer Permit
   → authorize production.deploy
   → verify production.deploy Permit
   → simulated deployment effect
 ```
+
+The current internal outer gate still uses the legacy policy-facing Action `model.agent.execute_tool`. That is **not** being presented as a new public Action taxonomy: public generic tool-action guidance uses Canon-backed `agent.tool.invoke`. Changing an existing policy-facing wire Action requires a separately controlled compatibility/migration decision.
 
 If either Decision is non-allow **or either Permit fails Verification**, no deployment result is produced.
 
