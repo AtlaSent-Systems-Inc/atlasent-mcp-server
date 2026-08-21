@@ -2,18 +2,18 @@
  * MCP server exposing AtlaSent authorization as tools.
  *
  *   evaluate       — ask for a decision; agent gates itself on the result
- *   verify_permit  — close the audit loop after the action runs
- *   deploy_service — DEMO protected tool: every call goes through `authorize()`
- *                    BEFORE executing the deploy. Denied calls never run.
+ *   verify_permit  — verify a permit at the execution boundary before acting
+ *   deploy_service — DEMO protected tool: authorize + verify BEFORE execution.
+ *                    Denied, held, or unverifiable calls never run.
  *
  * The `deploy_service` tool is the small end-to-end proof: it owns the
- * interception point. Look at its handler to see the exact pattern every
+ * execution boundary. Look at its handler to see the exact pattern every
  * protected tool should follow.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { toolResult, type ActionContext } from "./decision.js";
+import { toolResult, type ActionContext, type Decision } from "./decision.js";
 import {
   authorize,
   verify,
@@ -60,7 +60,7 @@ const actionType = z
     /^[A-Za-z0-9_.\.-:]+$/,
     "action_type must be lowercase identifier characters (A-Z, a-z, 0-9, _ . - :)",
   )
-  .describe("The action the agent is about to perform (e.g. deploy, delete, merge, execute_query, send_email).");
+  .describe("Canon-backed action type (for example production.deploy, agent.tool.invoke, access.grant). Use atlasent_lookup_action to discover governed Action Types.");
 const actorId = z
   .string()
   .min(1)
@@ -174,12 +174,30 @@ function log(event: string, data: Record<string, unknown>): void {
   process.stderr.write(line + "\n");
 }
 
+function verificationFailureDecision(
+  verification: Awaited<ReturnType<typeof verify>>,
+  decision?: Extract<Decision, { decision: "allow" }>,
+): Decision {
+  const detail = verification.reasons?.length
+    ? verification.reasons
+    : [`Permit verification failed (${verification.outcome})`];
+  return {
+    decision: "deny",
+    reasons: detail,
+    ...(decision?.audit_id ? { audit_id: decision.audit_id } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Agent tool gate — outer layer for the two-layer authorization pattern.
 //
 // Call this FIRST in any protected tool handler, before any tool-specific
 // authorize() call. It asks: "is this AI agent permitted to invoke any
 // tool on this server at all?"
+//
+// A positive Decision is not itself the execution Gate. The issued Permit is
+// verified immediately here; only a successfully verified Permit lets the
+// protected handler continue to its action-specific authorization step.
 //
 // Authorization primitives (evaluate, verify_permit) are intentionally
 // excluded — they must always be callable to bootstrap the flow.
@@ -189,7 +207,7 @@ async function agentToolGate(
   actorId: string,
   environment: string,
   approvals?: string[],
-): Promise<import("./decision.js").Decision | null> {
+): Promise<Decision | null> {
   // Forward the call's approvals into the gate context. Without this, a
   // production tool call is denied at the agent gate for "no approvals" even
   // when the caller supplied them — the approval never reaches the gate — so
@@ -207,6 +225,20 @@ async function agentToolGate(
     log("agent_tool_gate.blocked", { tool: toolName, actor: actorId, gate });
     return gate;
   }
+
+  const verification = await verify(gate.permit_token, ctx);
+  log("agent_tool_gate.verify", {
+    tool: toolName,
+    actor: actorId,
+    permit_token: gate.permit_token,
+    outcome: verification.outcome,
+  });
+  if (!verification.valid) {
+    const denied = verificationFailureDecision(verification, gate);
+    log("agent_tool_gate.blocked", { tool: toolName, actor: actorId, denied });
+    return denied;
+  }
+
   return null;
 }
 
@@ -247,9 +279,10 @@ function rateLimitOk(toolName: string): boolean {
 // through authorize(). An adversarial prompt or a hallucinated
 // "clean up" step could destroy real policies, webhooks, or revoke
 // live permits. Setting ATLASENT_MCP_READONLY=1 skips registration of
-// the 7 mutating tools below. The demo flow (evaluate → deploy_service
-// → verify_permit), all list/get/audit-read tools, and the
-// approval-request workflow remain available.
+// the 7 mutating tools below. The protected deploy demo now performs its
+// own evaluate → verify → execute boundary. All list/get/audit-read tools,
+// the standalone evaluate/verify primitives, and the approval-request
+// workflow remain available.
 const READONLY_DISABLED_TOOLS = new Set([
   "atlasent_create_policy",
   "atlasent_update_policy",
@@ -308,8 +341,8 @@ export function createServer(): McpServer {
       title: "AtlaSent — Evaluate Action",
       description:
         "Call this BEFORE performing any sensitive action. Returns a Decision: " +
-        "`allow` (use the permit_token and proceed), `deny` (you MUST NOT proceed), " +
-        "or `hold` (action is queued for human review — do not proceed, inform the user).",
+        "`allow` (verify the returned permit_token at the execution boundary before proceeding), " +
+        "`deny` (you MUST NOT proceed), or `hold` (do not proceed; route for review).",
       inputSchema: z.object({
         action_type: actionType,
         actor_id: actorId,
@@ -347,17 +380,16 @@ export function createServer(): McpServer {
   );
 
   // -------------------------------------------------------------------------
-  // verify_permit — close the audit loop
+  // verify_permit — execution-boundary Gate
   // -------------------------------------------------------------------------
   server.registerTool(
     "verify_permit",
     {
       title: "AtlaSent — Verify Permit",
       description:
-        "Call this AFTER completing an authorized action. Confirms the permit " +
-        "issued by `evaluate` is still valid. Outcome is `verified`, `expired`, " +
-        "`invalid`, or `error`. If `valid` is false, the action should be flagged " +
-        "for review.",
+        "Call this AFTER `evaluate` returns allow and BEFORE the protected native side effect. " +
+        "It verifies the permit for the presented execution context. Proceed only when `valid` is true; " +
+        "expired, invalid, replayed, mismatched, or error outcomes must block the action.",
       inputSchema: z.object({
         permit_token: z
           .string()
@@ -407,24 +439,25 @@ export function createServer(): McpServer {
   // -------------------------------------------------------------------------
   // deploy_service — protected tool
   //
-  // This is the authorization-before-execution proof. The tool:
-  //   1. builds an ActionContext
-  //   2. calls authorize(ctx) — this is the INTERCEPTION POINT
-  //   3. if decision is not "allow", returns the decision as-is (call blocked)
-  //   4. otherwise executes, then returns the allow decision with the result
+  // This is the verify-before-execute proof. The tool:
+  //   1. verifies the generic agent-tool authorization Permit
+  //   2. builds the production.deploy ActionContext
+  //   3. calls authorize(ctx)
+  //   4. if the Decision is not allow, returns without executing
+  //   5. verifies the action-specific Permit at the Gate
+  //   6. only after successful Verification executes the native effect
   //
-  // In production, your domain tools live on other MCP servers. They call
-  // AtlaSent's evaluate tool before executing. This demo co-locates the
-  // pattern so you can run `evaluate → act → verify` end-to-end today.
+  // In production, domain tools may live on other MCP servers. Their protected
+  // execution path must preserve the same ordering: evaluate → verify → execute.
   // -------------------------------------------------------------------------
   server.registerTool(
     "deploy_service",
     {
       title: "Deploy Service (authorization-gated)",
       description:
-        "Example protected tool. Every call is authorized by AtlaSent BEFORE the " +
-        "deploy runs. Denied or held calls are blocked and never touch the target " +
-        "system. On allow, the deploy executes and a permit_token is returned.",
+        "Example protected tool. Every call is authorized AND its Permit is verified by AtlaSent " +
+        "before the deploy runs. Denied, held, expired, replayed, mismatched, or unverifiable calls " +
+        "are blocked and never touch the target system.",
       inputSchema: z.object({
         service_name: z
           .string()
@@ -453,9 +486,8 @@ export function createServer(): McpServer {
         return toolResult(decision);
       }
 
-      // Agent tool gate: check model.agent.execute_tool before deploy-specific
-      // authorization. Forward approvals so an approved production deploy passes
-      // the gate (an unapproved one still fails closed).
+      // Outer Gate: model.agent.execute_tool is authorized and its Permit is
+      // verified inside agentToolGate before this handler can continue.
       const agentGate = await agentToolGate("deploy_service", args.actor_id, args.environment, args.approvals);
       if (agentGate !== null) return toolResult(agentGate);
 
@@ -467,13 +499,27 @@ export function createServer(): McpServer {
         ...(args.change_window ? { change_window: args.change_window } : {}),
       };
 
-      // ---- INTERCEPTION POINT --------------------------------------------
       const decision = await authorize(ctx);
       log("deploy_service.authorize", { service: args.service_name, ctx, decision });
 
       if (decision.decision !== "allow") {
         log("deploy_service.blocked", { service: args.service_name, reasons: (decision as { reasons?: string[] }).reasons });
         return toolResult(decision);
+      }
+
+      // ---- EXECUTION GATE -------------------------------------------------
+      // A positive Decision is not enough. Consume/verify the bounded Permit
+      // before the native side effect. If verification fails, result stays absent.
+      const verification = await verify(decision.permit_token, ctx);
+      log("deploy_service.verify", {
+        service: args.service_name,
+        permit_token: decision.permit_token,
+        outcome: verification.outcome,
+      });
+      if (!verification.valid) {
+        const denied = verificationFailureDecision(verification, decision);
+        log("deploy_service.blocked", { service: args.service_name, denied });
+        return toolResult(denied, { verification });
       }
       // --------------------------------------------------------------------
 
@@ -486,7 +532,7 @@ export function createServer(): McpServer {
       };
       log("deploy_service.executed", { service: args.service_name, permit_token: decision.permit_token, result });
 
-      return toolResult(decision, { result });
+      return toolResult(decision, { verification, result });
     },
   );
 
@@ -512,7 +558,7 @@ export function createServer(): McpServer {
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("What action is being performed (e.g. 'production.deploy', 'records.delete')."),
+          .describe("Canon-backed Action Type (for example 'production.deploy' or 'agent.tool.invoke')."),
         context: z
           .record(z.string(), z.unknown())
           .optional()
@@ -715,7 +761,7 @@ export function createServer(): McpServer {
             .string()
             .min(1)
             .max(MAX_FIELD_LEN)
-            .describe("Client-assigned unique ID for this policy bundle (e.g. 'deploy-gate')."),
+            .describe("Client-assigned unique ID for this policy bundle (e.g. 'production-change')."),
           title: z
             .string()
             .min(1)
@@ -1156,7 +1202,7 @@ export function createServer(): McpServer {
       title: "AtlaSent — Verify Permit (V1)",
       description:
         "Verify a permit token with full binding inputs against the V1 endpoint. " +
-        "Use this for production verification — under-specified verification is a bypass vector.",
+        "Use this at the execution boundary before the governed native effect; under-specified verification is a bypass vector.",
       inputSchema: z.object({
         permit_token: z
           .string()
@@ -1216,7 +1262,8 @@ export function createServer(): McpServer {
       description:
         "Create an approval request for a held action. The request ID is returned " +
         "in the evaluate response when decision is 'hold'. Submit resolution via " +
-        "atlasent_resolve_approval_request.",
+        "atlasent_resolve_approval_request. Approval is an input to Authorization; " +
+        "it does not itself authorize or prove execution.",
       inputSchema: z.object({
         subject: z
           .string()
@@ -1227,12 +1274,12 @@ export function createServer(): McpServer {
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("The action requiring approval (e.g. 'delete:production-db')."),
+          .describe("The action requiring approval (e.g. 'production.deploy')."),
         resource: z
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("The resource the action targets (e.g. 'db:prod-postgres')."),
+          .describe("The resource the action targets (e.g. 'env:production')."),
         org_id: z
           .string()
           .min(1)
@@ -1283,8 +1330,9 @@ export function createServer(): McpServer {
     {
       title: "AtlaSent — Resolve Approval Request",
       description:
-        "Approve or deny an approval request. On approval, the held evaluation " +
-        "may proceed; on denial, it stays blocked.",
+        "Approve or deny a pending approval request. Approval records a verified input; " +
+        "the protected action must still satisfy the current authorization/reevaluation " +
+        "path and Permit Verification before execution.",
       inputSchema: z.object({
         approval_request_id: z
           .string()
@@ -1345,7 +1393,7 @@ export function createServer(): McpServer {
       title: "AtlaSent — Record Execution Evaluation",
       description:
         "Record the outcome of an execution that was permitted by a prior evaluate " +
-        "call. Closes the audit loop with the actual execution result.",
+        "call. Closes the evidence loop with the observed execution result; it does not replace pre-execution Permit Verification.",
       inputSchema: z.object({
         evaluation_id: z
           .string()
