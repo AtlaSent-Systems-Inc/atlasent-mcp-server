@@ -527,4 +527,4 @@ npm run demo               # end-to-end authorization demo (local mode)
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)
