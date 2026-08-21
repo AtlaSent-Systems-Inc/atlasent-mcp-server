@@ -1,14 +1,38 @@
 # @atlasent/mcp-server
 
-**Authorize every AI agent tool call before it executes.**
+**Authorization for consequential AI-agent actions at the execution boundary.**
 
-An MCP server that plugs into any [Model Context Protocol](https://modelcontextprotocol.io)-compatible agent (Claude Desktop, Cursor, Claude Code, Copilot, LangChain) and enforces a simple contract: *no protected action runs until AtlaSent has authorized it*. Denied calls never reach the target system. Allowed calls return a permit token you can verify afterwards to close the audit loop.
+AtlaSent performs **execution-time authorization**: determine whether a specific consequential Action is authorized now, issue a bounded Permit on `allow`, verify that Permit at the execution Gate, and only then allow the governed native effect.
 
-Ships with a local rules engine so you can run the full evaluate → act → verify flow in under a minute, with zero credentials. The hosted AtlaSent backend is a configuration swap, not a rewrite.
+> **A plausible request is not organizational authority.**
 
-When an agent "gets stamped" before acting — a human submits, approves, or stamps the prepared work — that stamp is an authorization event. AtlaSent turns it into a permit you verify before execution. Human approval is one source of authority; a policy rule, a deployment gate, or a risk-engine decision are others. Every source produces the same thing: a verifiable permit.
+This MCP server exposes AtlaSent authorization primitives to Model Context Protocol hosts and includes a protected deployment demo that proves the ordering end to end.
 
-## Run the demo in 60 seconds
+## The invariant
+
+For an enforced protected path:
+
+```text
+Action proposed
+  → current organizational Authority + Policy + Context evaluated
+  → Decision
+      deny / hold / escalate → STOP
+      allow → bounded Permit
+  → Permit Verification at the execution Gate
+      invalid / expired / replayed / mismatched / error → STOP
+      verified → native effect may execute
+  → execution/native-effect Evidence recorded where the integration supplies it
+```
+
+**Evaluation is not execution. A positive Decision is not the Gate. Permit Verification happens before the protected side effect.**
+
+## Install
+
+```bash
+npm install @atlasent/mcp-server
+```
+
+Or run the local demo:
 
 ```bash
 git clone https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server.git
@@ -18,442 +42,226 @@ npm run build
 npm run demo
 ```
 
-You'll see five scenarios run end-to-end — two use cases in one demo:
+Local mode is a development/demo convenience. Its in-process policy engine and local Permit format are not a substitute for a deployed, accepted customer enforcement topology.
 
-**Deploy gate (CI/CD pipelines):**
-```
-Scenario A: agent attempts unauthorized deploy (prod, no approvals)
-    [1] Agent calls deploy_service
-    [2] MCP intercepts → calls authorize(ctx) → policy engine decides
-    [3] Tool execution BLOCKED
-        ✓ deploy did NOT run. The target system was not touched.
-        ✓ reason: Production action 'production.deploy' requires at least one approval...
+## Canon-backed Actions
 
-Scenario B: agent attempts authorized deploy (prod, with approval)
-    [3] Tool execution PROCEEDS
-        result: {"status":"deployed","service":"billing-api",...}
+AtlaSent does not treat every ad-hoc tool string as a new governed Action Type.
 
-Scenario C: verify_permit closes the audit loop
-    result: {"outcome":"verified","valid":true,...}
+Use the **Protected Action Canon** for stable Action identity. Two important examples are:
+
+```text
+production.deploy
+agent.tool.invoke
 ```
 
-**Agent tool call governance (MCP / AI-native builders):**
+For a generic AI tool invocation, use `agent.tool.invoke` as the Action Type and carry tool-specific facts—tool name, target, environment, arguments/payload digest, resource state, and other required context—in the authorization context or binding fields supported by the selected integration path.
+
+Use the read-only `atlasent_lookup_action` tool to discover Canon-backed Action Types instead of inventing a parallel taxonomy.
+
+## Authority is not Approval
+
+Keep the concepts separate:
+
+- **Authority** — standing, scoped organizational right to cause a class of change.
+- **Authorization** — per-request determination whether this exact Action may proceed now.
+- **Policy** — versioned conditions applied to the determination.
+- **Approval** — verified input that may satisfy a Policy condition; not standing Authority and not the final Authorization result.
+- **Decision** — `allow | deny | hold | escalate` at the platform boundary.
+- **Permit** — bounded positive-Authorization artifact.
+- **Verification** — execution-boundary check of the Permit and applicable bindings.
+- **Execution / native effect** — what the underlying tool or system actually does.
+- **Evidence / Proof** — durable evidence of the authorization and, where observed, the effect/result.
+
+A human Approval, favorable risk signal, policy match, deployment ticket, or workflow status does not by itself become organizational Authority.
+
+## Protected-tool demo
+
+`deploy_service` is intentionally small. It demonstrates a two-layer protected path:
+
+```text
+agent requests deploy_service
+  → authorize agent.tool.invoke
+  → verify agent-tool Permit
+  → authorize production.deploy
+  → verify production.deploy Permit
+  → simulated deployment effect
 ```
-Scenario D: agent evaluates agent.db.delete without a change window
-    [1] Agent calls evaluate before running agent.db.delete
-    [3] Tool execution HELD — awaiting human review
-        ✓ database delete did NOT run. Queued for human review.
 
-Scenario E: agent evaluates agent.search.web (safe read)
-    [3] Tool execution PROCEEDS — agent searches the web
-        ✓ web search authorized.
-    [4] verify_permit closes the audit loop: {"outcome":"verified","valid":true}
+If either Decision is non-allow **or either Permit fails Verification**, no deployment result is produced.
+
+The protected-tool response includes the action-specific Verification result alongside the simulated native result:
+
+```json
+{
+  "decision": "allow",
+  "permit_token": "...",
+  "verification": {
+    "outcome": "verified",
+    "valid": true
+  },
+  "result": {
+    "status": "deployed",
+    "service": "billing-api"
+  }
+}
 ```
 
-AtlaSent governs any `action_type` — not just deploys. The same evaluate →
-permit → verify flow that gates CI/CD pipelines also governs your agent's
-database writes, web searches, and external API calls.
+The returned Permit has already been consumed by the execution-boundary Verification. Verifying it again should be treated as a replay, not as a step required after deployment.
 
-The demo uses `local` mode (no API key needed). To run the same demo against the hosted AtlaSent backend once your API key is issued:
+## Self-gating agent pattern
+
+For an agent or MCP host that owns its own native tool boundary, the safe pattern is:
+
+```ts
+const decision = await evaluate({
+  action_type: "agent.tool.invoke",
+  actor_id: "agent:research-bot",
+  environment: "production",
+});
+
+if (decision.decision !== "allow") {
+  throw new Error("Action is not authorized");
+}
+
+const verification = await verify_permit({
+  permit_token: decision.permit_token,
+  action_type: "agent.tool.invoke",
+  actor_id: "agent:research-bot",
+  environment: "production",
+  // Present target_id / payload_hash when the selected authorization path
+  // binds those fields.
+});
+
+if (!verification.valid) {
+  throw new Error("Permit did not verify");
+}
+
+// Only now may the protected native effect occur.
+const result = await runProtectedTool();
+```
+
+A wrapper, decorator, prompt, or MCP tool definition is not automatically a non-bypassable Gate. The enforcement claim belongs to the actual topology: the native effect must be unreachable through the claimed protected path unless required Authorization and Permit Verification succeeded.
+
+## Core tools
+
+### `evaluate`
+
+Simple local/remote authorization helper for MCP hosts.
+
+```text
+Input:  { action_type, actor_id, environment, approvals?, change_window? }
+Output: { decision: "allow" | "deny" | "hold", permit_token?, ... }
+```
+
+On `allow`, **do not execute yet**. Present the Permit to `verify_permit` at the execution boundary first.
+
+### `verify_permit`
+
+Execution-boundary verification helper.
+
+```text
+Input: {
+  permit_token,
+  action_type,
+  actor_id,
+  environment,
+  approvals?,
+  change_window?,
+  target_id?,
+  payload_hash?
+}
+Output: { outcome: "verified" | "expired" | "invalid" | "error", valid, ... }
+```
+
+Proceed only when `valid === true`. Successful Verification consumes a single-use Permit where that contract applies.
+
+### `deploy_service`
+
+Protected deployment demonstration. It performs the necessary Authorization and Verification internally before producing its simulated deployment result.
+
+### `atlasent_evaluate` / `atlasent_verify_permit`
+
+Hosted V1 API-facing tools. Use the richer remote evaluation path when you need additional context beyond the small `evaluate` demo envelope. Verification remains an execution-boundary operation.
+
+### `atlasent_lookup_action`
+
+Read-only Canon lookup for Action Types, gate flags, authorization patterns, evidence requirements, and graph relationships.
+
+### `atlasent_atlas_lookup`
+
+Read-only lookup of canonical AtlaSent concepts such as Authority, Policy, Decision, Permit, Verification, Evidence, Gate, and Trust Root.
+
+The server also exposes policy, permit, approval, evidence, compliance, trajectory, and VQP tools. Use MCP `tools/list` for the exact tool inventory supported by the installed version.
+
+## Approval workflow
+
+Approval can be required, but resolving an Approval is not equivalent to executing the protected Action.
+
+```text
+Approval / Assertion collected
+  → current Authorization / reevaluation path
+  → Decision
+  → Permit on allow
+  → Verification
+  → native effect
+```
+
+Use `atlasent_create_approval_request` and `atlasent_resolve_approval_request` to manage approval inputs. The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
+
+## Execution evidence
+
+`atlasent_record_execution_evaluation` records an observed execution outcome after the native effect. That evidence function does **not** replace pre-execution Permit Verification.
+
+Keep these statements distinct:
+
+- an `allow` Decision proves a positive authorization determination was made;
+- a verified Permit proves the bounded authorization artifact passed its Gate checks at that point in time;
+- execution/native-effect evidence is what supports a claim that the underlying action actually occurred.
+
+## Local vs remote mode
+
+| Mode | Purpose |
+|---|---|
+| `local` | Development/demo/CI using the small in-process rules engine. |
+| `remote` | Calls the configured AtlaSent hosted/runtime API. |
+
+Remote example:
 
 ```bash
 ATLASENT_MODE=remote \
-  ATLASENT_API_KEY=ask_live_xxx \
-  ATLASENT_BASE_URL=https://api.atlasent.io/functions/v1 \
-  ATLASENT_MCP_READONLY=1 \
-  npm run demo
+ATLASENT_API_KEY=ask_live_xxx \
+ATLASENT_BASE_URL=https://api.atlasent.io/functions/v1 \
+ATLASENT_MCP_READONLY=1 \
+npx @atlasent/mcp-server
 ```
 
-> **`ATLASENT_BASE_URL`** defaults to `https://api.atlasent.io/functions/v1`. You can omit it unless you are on a self-hosted deployment.
+`ATLASENT_BASE_URL` defaults to `https://api.atlasent.io/functions/v1`.
 
-`ATLASENT_MCP_READONLY=1` is **recommended for any live-API demo** — see [Read-only mode](#read-only-mode-for-live-demos) below.
+## Read-only mode for live demos
 
-## Agent tool call governance
+Set:
 
-AtlaSent is not a deploy gate product. It is execution-time authorization infrastructure. The `action_type` field is yours to define — any string your agent platform uses to name a tool invocation becomes a protected action.
-
-**Common agent action types:**
-
-```ts
-// Database mutations
-"agent.db.write"         // INSERT / UPDATE
-"agent.db.delete"        // DELETE / TRUNCATE (destructive — triggers hold)
-
-// External network calls
-"agent.search.web"       // Read-only web search
-"agent.api.post"         // Outbound POST to an external service
-
-// File system
-"agent.fs.write"         // Write or overwrite a file
-"agent.fs.delete"        // Delete a file
-
-// Code execution
-"agent.code.execute"     // Run user-supplied code
+```bash
+ATLASENT_MCP_READONLY=1
 ```
 
-**Pattern — agent evaluates before every sensitive tool call:**
+to prevent registration of mutating administrative tools during a live-API demo. Read-only mode does not turn the server into a universal security boundary; it reduces the exposed mutation surface. The protected execution path still depends on the Authorization and Verification topology described above.
 
-```ts
-// Before running a tool, the agent calls evaluate
-const ctx = {
-  action_type: "agent.db.delete",   // your action namespace
-  actor_id: "agent:data-pipeline",   // which agent is acting
-  environment: "production",
-  // any context your policies need
-};
+## Fail-closed behavior
 
-const decision = await authorize(ctx);   // interception point
-if (decision.decision !== "allow") {
-  // Tell the LLM the tool was blocked and why
-  return `Tool blocked: ${decision.reason}`;
-}
+For a path that is configured to require AtlaSent Authorization and Permit Verification, treat these as block conditions:
 
-// Run the tool
-const result = await runDatabaseDelete(ctx);
+- non-allow Decision;
+- missing required Permit;
+- authentication/API failure;
+- invalid, expired, revoked, replayed, or binding-mismatched Permit;
+- Verification error;
+- missing required execution binding.
 
-// Close the audit loop
-await verify(decision.permit_token, ctx);
-```
+Shadow/advisory evaluation is useful for observation, but it is not the same as enforced execution protection.
 
-If you are using **LangChain**, the `@atlasent/guard` package wraps this pattern as a one-liner decorator — see [atlasent-sdk](https://github.com/AtlaSent-Systems-Inc/atlasent-sdk).
-
-If you are building your own MCP server with protected tools, copy the `deploy_service` handler in `src/server.ts` — it is the canonical 20-line interception pattern. Wire `atlasent_evaluate` before any tool that writes, deletes, calls external APIs, or runs code.
-
-## Tools
-
-### `atlasent_evaluate` — evaluate an action against AtlaSent policies
-
-Evaluate whether a subject is permitted to perform an action on a resource. Returns a `decision` (`allow`/`deny`/`hold`/`escalate`), a `permit_token` if allowed, an `evaluation_id`, and an optional `reason`.
-
-```
-Input:  { subject, action, resource, org_id, context? }
-Output: { decision, permit_token?, evaluation_id?, reason?, ... }
-```
-
-**Example:**
-```json
-{
-  "subject": "user:alice",
-  "action": "production.deploy",
-  "resource": "env:prod",
-  "org_id": "org_abc123",
-  "context": { "ip": "10.0.0.1" }
-}
-```
-
-### `atlasent_list_policies` — list all policies for an organization
-
-Returns all policies for the given org, optionally filtered by status.
-
-```
-Input:  { org_id, status? }   (status: "draft" | "shadow" | "enforce")
-Output: array of policy objects
-```
-
-**Example:** `{ "org_id": "org_abc123", "status": "enforce" }`
-
-### `atlasent_get_policy` — get a single policy by ID
-
-Fetches the full policy definition for a given `policy_id`.
-
-```
-Input:  { policy_id, org_id }
-Output: policy object
-```
-
-**Example:** `{ "policy_id": "pol_xyz789", "org_id": "org_abc123" }`
-
-### `atlasent_list_audit_events` — query the audit event log
-
-Query recent evaluation decisions. Use to verify that an evaluation was recorded or to investigate a sequence of decisions.
-
-```
-Input:  { org_id, evaluation_id?, from?, to?, limit? }
-        (from/to: ISO 8601; limit: 1–100, default 20)
-Output: array of audit event objects
-```
-
-**Example:**
-```json
-{
-  "org_id": "org_abc123",
-  "from": "2025-01-01T00:00:00Z",
-  "to": "2025-01-02T00:00:00Z",
-  "limit": 50
-}
-```
-
-### `atlasent_create_policy` — create an authorization policy
-
-> **Mutating tool — gated off when `ATLASENT_MCP_READONLY=1`.**
-
-Define a new authorization rule. New policies are created in `draft` state (no enforcement) and must be promoted to `shadow` or `enforce` to take effect.
-
-```
-Input:  { org_id, policy_id, title, policy_type, rules, description?, status?, ... }
-Output: { policy_id, title, status, ... }
-```
-
-### `atlasent_update_policy` — update an existing policy
-
-> **Mutating tool — gated off when `ATLASENT_MCP_READONLY=1`.**
-
-Partial-update (PATCH) a policy's rules, metadata, or lifecycle status (e.g. promote `draft` → `enforce`).
-
-```
-Input:  { policy_id, org_id, title?, rules?, status?, ... }
-Output: { policy_id, status, ... }
-```
-
-### `atlasent_delete_policy` — permanently delete a policy
-
-> **Destructive tool — gated off when `ATLASENT_MCP_READONLY=1`.**
-
-Irreversibly remove a policy. Prefer setting `status: "archived"` via `atlasent_update_policy` when you only want to disable enforcement.
-
-```
-Input:  { policy_id, org_id }
-Output: {} (empty on success)
-```
-
-### `atlasent_list_permits` — list issued permits
-
-Paginated list of permits for an organization, with optional filters by status, actor, action type, and time range.
-
-```
-Input:  { org_id, status?, actor_id?, action_type?, from?, to?, limit?, cursor? }
-Output: { permits: [...], next_cursor? }
-```
-
-### `atlasent_revoke_permit` — revoke an issued permit
-
-> **Destructive tool — gated off when `ATLASENT_MCP_READONLY=1`.**
-
-Immediately invalidate a permit so subsequent verify calls fail with `permit_revoked`. Idempotent.
-
-```
-Input:  { permit_id, org_id, reason? }
-Output: { revoked, permit_id, ... }
-```
-
-### `atlasent_permit` — issue a permit token out-of-band
-
-> **Mutating tool — gated off when `ATLASENT_MCP_READONLY=1`.**
-
-Mint a time-limited permit for a subject/action/resource outside of the standard evaluate flow — for example when a human pre-approves access.
-
-```
-Input:  { subject, action, resource, org_id, ttl_seconds?, context? }
-Output: { permit_token, expires_at?, ... }
-```
-
-### `atlasent_verify_permit` — verify a permit token (v1 REST)
-
-Verify a permit token is currently valid for a given subject/action/resource. Use after completing an authorized action to close the audit loop.
-
-```
-Input:  { permit_token, org_id, action?, resource? }
-Output: { valid, outcome, reason? }
-```
-
-### `atlasent_create_approval_request` — request human approval
-
-Submit an action for human sign-off. Call when `atlasent_evaluate` returns `hold` or when the agent knows approval is required. Do not proceed until resolved.
-
-```
-Input:  { subject, action, resource, org_id, justification?, context? }
-Output: { approval_request_id, status, created_at, ... }
-```
-
-### `atlasent_resolve_approval_request` — approve or deny a request
-
-Approve or deny a pending approval request on behalf of a human reviewer.
-
-```
-Input:  { approval_request_id, org_id, resolution, resolver_id, comment? }
-        (resolution: "approve" | "deny")
-Output: { approval_request_id, status, resolver_id, ... }
-```
-
-### `atlasent_record_execution_evaluation` — record execution outcome
-
-Record the outcome of an authorized action to complete the full audit loop: evaluate → execute → record.
-
-```
-Input:  { evaluation_id, org_id, outcome, executed_at?, details? }
-        (outcome: "success" | "failure" | "skipped")
-Output: { execution_id, outcome, recorded_at, ... }
-```
-
-### `atlasent_create_webhook` — register a webhook
-
-> **Mutating tool — gated off when `ATLASENT_MCP_READONLY=1`.**
-
-Subscribe an external HTTPS endpoint to real-time AtlaSent events (e.g. `evaluation.deny`, `approval.requested`, `permit.revoked`).
-
-```
-Input:  { org_id, url, events, description?, secret? }
-Output: { webhook_id, url, events, secret?, ... }
-```
-
-### `atlasent_delete_webhook` — remove a webhook
-
-> **Destructive tool — gated off when `ATLASENT_MCP_READONLY=1`.**
-
-Permanently deregister a webhook. AtlaSent stops sending events to that URL immediately.
-
-```
-Input:  { webhook_id, org_id }
-Output: {} (empty on success)
-```
-
-### `evaluate` — for agents that gate themselves (local/remote mode)
-
-The agent calls `evaluate` before any sensitive action and respects the decision.
-
-```
-Input:  { action_type, actor_id, environment, approvals?, change_window? }
-Output: { decision: "allow" | "deny" | "hold", permit_token?, reason?, audit_id?, ... }
-```
-
-### `verify_permit` — close the audit loop
-
-After the action runs, the agent calls `verify_permit` with the issued token.
-
-```
-Input:  { permit_token, action_type, actor_id, environment, ... }
-Output: { outcome: "verified" | "expired" | "invalid" | "error", valid: boolean, ... }
-```
-
-### `deploy_service` — demo of the interception pattern
-
-A protected tool that authorizes itself before executing. Every call:
-
-1. Builds an action context from the tool arguments
-2. Calls `authorize(ctx)` — **this is the interception point**
-3. If the decision is anything other than `allow`, returns the decision and does NOT execute
-4. On `allow`, runs the deploy and returns the result plus the permit token
-
-See `src/server.ts` (the `deploy_service` handler) for the exact 20-line pattern every protected tool should follow. In production, your domain tools live on other MCP servers and call AtlaSent's `evaluate` tool before executing; this demo co-locates them so you can see the full flow today.
-
-## Execution Flow
-
-```
-  ┌─────────────┐
-  │    Agent     │  wants to call a protected tool
-  └─────┬───────┘
-        │
-        ▼
-  ┌───────────────────────┐
-  │    Protected tool       │
-  │  (e.g. deploy_service)  │
-  └─────┬───────────────────┘
-        │ (1) build ActionContext
-        ▼
-  ┌─────────────────┐       ┌──────────────────────────┐
-  │  authorize(ctx)  │──────▶│  engine (local | remote)  │
-  └─────┬───────────┘       └────────┬─────────────────┘
-        │ (2) Decision               │
-        │   allow | deny | hold      │
-        ▼                            ▼
-  ┌────────────────────────────────────┐
-  │  decision === "allow"?                    │
-  └──┬───────────────────────┬───────────────┘
-     │ no                    │ yes
-     ▼                       ▼
-  BLOCKED              (3) execute the action
-  return decision            │
-                             ▼
-                      (4) return { decision, permit_token, result }
-                             │
-                             ▼
-                      later: verify_permit closes the audit loop
-```
-
-The **interception point** is step (2): `authorize()` runs before the action. That's the entire guarantee — if `decision !== "allow"`, the action does not run.
-
-## Decision envelope
-
-Every authorization result uses the same shape, so agents and hosts handle all outcomes uniformly:
-
-```ts
-type Decision =
-  | { decision: "allow";  permit_token: string; audit_id?: string; conditions?: string[] }
-  | { decision: "deny";   reason: string;       audit_id?: string }
-  | { decision: "hold";   reason: string;       hold_id?: string; audit_id?: string };
-```
-
-Verification has a parallel shape:
-
-```ts
-type VerifyResult = {
-  outcome: "verified" | "expired" | "invalid" | "error";
-  valid: boolean;
-  reason?: string;
-  audit_id?: string;
-};
-```
-
-**Handling each case:**
-
-| Decision | Agent behavior |
-|---|---|
-| `allow` | Proceed. Pass `permit_token` to `verify_permit` after completing the action. |
-| `deny` | Do not proceed. Surface `reason` to the user. |
-| `hold` | Do not proceed. Tell the user the action is queued for human review; reference `hold_id`. |
-| **verification failure** (verify returns `valid: false` or `outcome: "error"`) | Flag the action for review. Something happened outside policy. |
-
-## Local vs Remote mode
-
-The engine behind `authorize()` is pluggable. The same tool handlers work in both modes — swapping the backend is a configuration change.
-
-| Mode | When selected | What it does |
-|---|---|---|
-| `local` | `ATLASENT_MODE=local`, or both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are unset | Runs a small in-process rules engine (`src/localEngine.ts`) — no network, no credentials |
-| `remote` | `ATLASENT_MODE=remote`, or both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are set | Calls the hosted AtlaSent backend at `POST /v1-evaluate` and `POST /v1-verify-permit` |
-
-**Local rules** (for demos):
-
-1. Production action + no approvals → **deny**
-2. Destructive action (`delete`, `drop`, `destroy`, `truncate`, `purge`, `wipe`, `rm`) + no `change_window` → **hold**
-3. Otherwise → **allow** (with a `pt_local_*` permit valid for 5 minutes)
-
-**Environment variables:**
-
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
-| `ATLASENT_MODE` | no | auto-detect | Force `local` or `remote` |
-| `ATLASENT_API_KEY` | remote only | — | Bearer token for the hosted API (prefix: `ask_live_` / `ask_test_`) |
-| `ATLASENT_BASE_URL` | no | `https://api.atlasent.io/functions/v1` | AtlaSent API base URL. Leave unset to use the hosted SaaS endpoint. Override only for self-hosted deployments. |
-| `ATLASENT_ANON_KEY` | no | — | Optional `x-anon-key` header |
-| `ATLASENT_MCP_RATE_LIMIT` | no | `600` | Per-tool calls per minute (token bucket) |
-| `ATLASENT_MCP_READONLY` | no | (unset) | If `1` or `true`, skip registration of the 7 mutating tools. **Recommended for live-API demos.** See [Read-only mode](#read-only-mode-for-live-demos). |
-
-## Read-only mode (for live demos)
-
-In `local` mode, every tool either calls the in-process rules engine or short-circuits with no side effects, so it doesn't matter what the agent tries to do. The story is different the moment you point the server at a live AtlaSent backend with `ATLASENT_MODE=remote` and a real API key: the mutating CRUD tools call the hosted API **directly**. They do not go through the `authorize()` interception. An adversarial prompt, a hallucinated "let me clean up" step, or a tool-misuse mistake by the agent can damage real demo-org state.
-
-Set `ATLASENT_MCP_READONLY=1` (or `true`) and the server will skip registration of these 7 tools at startup:
-
-- `atlasent_create_policy`
-- `atlasent_update_policy`
-- `atlasent_delete_policy`
-- `atlasent_create_webhook`
-- `atlasent_delete_webhook`
-- `atlasent_revoke_permit`
-- `atlasent_permit`
-
-Everything else stays available, including the full demo flow:
-
-- The agent-gating loop (`evaluate` → `verify_permit`) and the protected-tool demo (`deploy_service`)
-- All read tools (`atlasent_list_policies`, `atlasent_get_policy`, `atlasent_list_permits`, `atlasent_list_audit_events`, `atlasent_evaluate`, `atlasent_verify_permit`)
-- The approval-request workflow (`atlasent_create_approval_request`, `atlasent_resolve_approval_request`, `atlasent_record_execution_evaluation`)
-
-On startup, the server emits a `server.readonly_mode` structured log line to stderr listing the disabled tools so the operator can confirm the gate is active.
-
-**When to enable:** any live demo (customer call, conference, screencast) that uses a real API key — even on a dedicated demo org. The cost is zero (the read flow, the approval flow, and the `deploy_service` proof all stay functional); the upside is that no LLM mishap can destroy live state. Disable the flag only when you are intentionally exercising the mutating tools from a trusted operator console.
-
-## Claude Desktop config
+## Claude Desktop
 
 ```json
 {
@@ -472,59 +280,33 @@ On startup, the server emits a `server.readonly_mode` structured log line to std
 }
 ```
 
-Location: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
-
-Remove `ATLASENT_MCP_READONLY` from `env` only when you intend to use the mutating CRUD tools from a trusted operator session.
-
-## Cursor config
-
-Add to `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json` globally), same shape as above.
-
-## Claude Code
-
-```bash
-claude mcp add atlasent -- npx -y @atlasent/mcp-server
-export ATLASENT_API_KEY=ask_live_xxxxxxxxxxxxxxxx
-export ATLASENT_BASE_URL=https://api.atlasent.io/functions/v1  # omit to use the default SaaS endpoint
-export ATLASENT_MCP_READONLY=1   # safe default; unset for ops sessions
-```
-
-## Fail-closed guarantees
-
-Every error path collapses to `{ decision: "deny" }`:
-
-- API unreachable → **deny**
-- Request timeout (10s) → **deny**
-- Malformed response → **deny**
-- Remote returns `allow` without a `permit_token` → **deny**
-- Unknown/invalid decision string → **deny**
-- Verify returns an unrecognized `verify_error_code` → **invalid** (treated as not valid)
-
-The agent never proceeds without an explicit `allow`.
-
-## How the hosted backend plugs in
-
-Nothing in the tool handlers changes when you move from local to remote. The `deploy_service` handler calls `authorize(ctx)`; `authorize()` reads `ATLASENT_MODE` on every call and picks the engine. Switching to the hosted backend is three env vars.
-
-The remote adapter (`src/engine.ts`) speaks the AtlaSent API shape directly.
-
-- `POST /v1-evaluate`
-  - request: `{ action_type, actor_id, context }` — flat top-level fields. mcp-server passes `environment`, `approvals`, and `change_window` inside `context` so policy expressions can read them.
-  - response: `{ decision, permit_token?, request_id, expires_at?, denial?, ... }` — top-level `permit_token` (raw UUID) is exposed to MCP hosts as the MCP envelope's `permit_token`; `request_id` becomes `audit_id`.
-- `POST /v1-verify-permit`
-  - request: `{ permit_token, action_type, actor_id }`
-  - response: `{ valid, outcome: "allow" | "deny", verify_error_code?, reason? }` — server `outcome === "allow"` becomes `verified`; `verify_error_code` is mapped to `expired` / `invalid` / `error` and falls through to `invalid` for anything unrecognized.
+The same server can be configured in other MCP-compatible hosts using their normal MCP server configuration mechanism.
 
 ## Development
 
 ```bash
 npm install
-npm run build              # compile TypeScript
-npm test                   # 26 unit tests (local + remote mocked) + readonly-mode tests
-npm run test:integration   # requires ATLASENT_API_KEY + ATLASENT_BASE_URL; skips otherwise
-npm run demo               # end-to-end authorization demo (local mode)
+npm run typecheck
+npm test
+npm run build
+npm run demo
 ```
+
+`npm test` includes regression tests proving that the protected deployment demo does not produce a native result when either the outer agent-tool Permit or the action-specific deployment Permit fails Verification.
+
+## Security
+
+Do not place API keys, signing material, customer secrets, or production credentials in source control. Limit authorization context to facts required by the selected policy and bindings.
+
+Security-sensitive integrations must place the actual side effect **after** the required Authorization and Verification checks in control flow. Logging a Decision and then executing anyway is not enforcement.
+
+## Related public components
+
+- [`atlasent-sdk`](https://github.com/AtlaSent-Systems-Inc/atlasent-sdk) — language SDKs
+- [`atlasent-action`](https://github.com/AtlaSent-Systems-Inc/atlasent-action) — GitHub Actions integration
+- [`atlasent-verify`](https://github.com/AtlaSent-Systems-Inc/atlasent-verify) — offline evidence verifier
+- [`atlasent-keys`](https://github.com/AtlaSent-Systems-Inc/atlasent-keys) — public verification material
 
 ## License
 
-[Apache-2.0](LICENSE)
+Licensed under the [Apache License, Version 2.0](./LICENSE).
