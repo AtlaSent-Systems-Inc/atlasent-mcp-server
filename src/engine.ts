@@ -743,6 +743,100 @@ export async function explainAuthority(params: ExplainAuthorityParams): Promise<
 }
 
 // ---------------------------------------------------------------------------
+// Authority Graph Integrity / Consistency Auditor (read-only)
+//
+// GET /v1-authority-intelligence/integrity-audit — the fourth sub-route of
+// the v1-authority-intelligence edge function. Read-only: no authorize() /
+// verify() routing, same as explainAuthority above.
+//
+// Path form: this uses the `/v1-<function>/<sub-route>` shape (the same shape
+// as the proven-in-production `/v1-evaluate` and `/v1-verify-permit` calls at
+// the top of this file), NOT the `/v1/<resource>` shape used by the generic
+// REST readers. That is deliberate and load-bearing here: the handler routes
+// by stripping `^/v1-authority-intelligence/?` off the pathname and then
+// matching the first remaining segment against 'integrity-audit'. A request
+// arriving as `/v1/authority-intelligence/integrity-audit` leaves 'v1' as the
+// first segment and falls through to the handler's 404. Do not "normalise"
+// this path to match its siblings in this file.
+//
+// The organization is derived server-side from the API key — there is
+// deliberately no client-supplied org parameter on this route, so none is
+// accepted here.
+// ---------------------------------------------------------------------------
+
+/**
+ * A single integrity finding.
+ *
+ * `classification` is a THREE-WAY distinction, not a pass/fail flag:
+ *   - `defect`           — a genuine inconsistency in the authority graph.
+ *   - `non_exercisable`  — frequently the CORRECT, healthy state (e.g. an
+ *                          expired grant that is supposed to be expired).
+ *                          It is not a failure and must not be counted as one.
+ *   - `unresolved`       — the proposition could NOT be verified. It must
+ *                          never be treated as clean; "could not check" and
+ *                          "checked and found nothing" are different facts.
+ */
+export type IntegrityClassification = "defect" | "non_exercisable" | "unresolved";
+
+export type IntegritySeverity = "critical" | "high" | "medium" | "low" | "info";
+
+export interface IntegrityFinding {
+  finding_type: string;
+  classification: IntegrityClassification;
+  severity: IntegritySeverity;
+  subject_id: string | null;
+  source_table: string | null;
+  source_id: string | null;
+  related_source_ids: string[];
+  effective_at: string | null;
+  evidence_posture: "observed" | "derived";
+  reason: string;
+}
+
+/**
+ * The audit report as returned on the wire.
+ *
+ * These types are a COMPILE-TIME transcription of the documented response
+ * shape, not a runtime validation of it — the object handed back is the
+ * untouched API response, exactly as with EvaluateResponse above. Nothing in
+ * this module derives a verdict from it.
+ */
+export interface IntegrityReport {
+  schema_version: string;
+  query: string;
+  organization_id: string;
+  evaluated_at: string;
+  produced_by: string[];
+  summary: Record<string, unknown>;
+  findings: IntegrityFinding[];
+  nodes: Array<Record<string, unknown>>;
+  edges: Array<Record<string, unknown>>;
+}
+
+export interface IntegrityAuditParams {
+  /**
+   * How far back the decision/permit scan reaches, in days (1–3650).
+   * Optional and deliberately un-defaulted client-side: when the caller
+   * omits it the parameter is left off the query string entirely so the
+   * server applies its own window, which it echoes back in
+   * `summary.audited_scope`. Inventing a default here would silently
+   * narrow (or widen) an audit the caller never asked to bound.
+   */
+  decision_window_days?: number;
+}
+
+export async function integrityAudit(
+  params: IntegrityAuditParams = {},
+): Promise<IntegrityReport> {
+  return get<IntegrityReport>("/v1-authority-intelligence/integrity-audit", {
+    decision_window_days:
+      params.decision_window_days !== undefined
+        ? String(params.decision_window_days)
+        : undefined,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Execution evaluation recording
 // ---------------------------------------------------------------------------
 

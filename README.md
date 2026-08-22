@@ -194,6 +194,25 @@ Read-only Canon lookup for Action Types, gate flags, authorization patterns, evi
 
 Read-only lookup of canonical AtlaSent concepts such as Authority, Policy, Decision, Permit, Verification, Evidence, Gate, and Trust Root.
 
+### `atlasent_integrity_audit`
+
+Read-only audit of the organization's Authority graph for internal inconsistency. Hosted mode only; the organization is derived server-side from the API key.
+
+```text
+Input:  { decision_window_days? }   // 1-3650; omit to let the server choose
+Output: the integrity report, verbatim
+```
+
+**This is not a pass/fail health check, and the tool adds no verdict of its own.** Each finding carries a three-way `classification`:
+
+| `classification` | How to read it |
+|---|---|
+| `defect` | A genuine inconsistency in the Authority graph. |
+| `non_exercisable` | Frequently the **correct, healthy** state — e.g. an expired grant that is supposed to be expired. Not a failure. |
+| `unresolved` | The proposition **could not be verified**. Never treat it as clean; "could not check" and "checked and found nothing" are different facts. |
+
+Read `summary.audited_scope` before concluding anything from an empty `findings` list — a short decision window is not an absence of findings. If the audit cannot complete, the server refuses rather than returning a partial report, and this tool surfaces that as an error rather than an empty report.
+
 The server also exposes policy, permit, approval, evidence, compliance, trajectory, and VQP tools. Use MCP `tools/list` for the exact tool inventory supported by the installed version.
 
 ## Approval workflow

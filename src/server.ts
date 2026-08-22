@@ -23,6 +23,7 @@ import {
   getPolicy,
   listAuditEvents,
   explainAuthority,
+  integrityAudit,
   createPolicy,
   updatePolicy,
   deletePolicy,
@@ -798,6 +799,82 @@ export function createServer(): McpServer {
         });
         return toolResult(result as Record<string, unknown>);
       } catch (e) {
+        return toolError(e);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_integrity_audit
+  //
+  // Read-only. Registered alongside the other generic read tools, with the
+  // same rateLimitOk + toolError idiom and no local-engine fallback — an
+  // authority-graph integrity audit is inherently a hosted-mode capability
+  // (it reads the runtime system of record), not a local allow/deny decision.
+  // In local mode the underlying GET simply fails and surfaces as an isError
+  // result, exactly as it does for list_policies / explain_authority. That is
+  // the fail-closed outcome: no report is synthesized.
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "atlasent_integrity_audit",
+    {
+      title: "AtlaSent — Authority Graph Integrity Audit",
+      description:
+        "Audit the organization's authority graph for internal inconsistency and " +
+        "return the report verbatim. Strictly read-only; changes no policy, permit, " +
+        "or decision. THIS IS NOT A PASS/FAIL HEALTH CHECK and the tool synthesizes " +
+        "no verdict of its own. Each finding carries a three-way `classification`: " +
+        "`defect` is a genuine inconsistency; `non_exercisable` is frequently the " +
+        "CORRECT, healthy state (e.g. an expired grant that is supposed to be " +
+        "expired) and must not be read as a failure; `unresolved` means the " +
+        "proposition COULD NOT BE VERIFIED and must never be treated as clean. " +
+        "Read `summary.audited_scope` before drawing any conclusion from an empty " +
+        "findings list — a short decision window is not an absence of findings. " +
+        "If the audit cannot complete, the server refuses rather than returning a " +
+        "partial report, and this tool surfaces that as an error — never an empty " +
+        "report.",
+      inputSchema: z.object({
+        decision_window_days: z
+          .number()
+          .int()
+          .min(1)
+          .max(3650)
+          .optional()
+          .describe(
+            "Optional. How far back the decision/permit scan reaches, in days " +
+              "(1-3650). Omit to let the server apply its own window, which it " +
+              "echoes back in summary.audited_scope. There is no client-side " +
+              "default.",
+          ),
+      }),
+      annotations: {
+        title: "AtlaSent — Authority Graph Integrity Audit",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_integrity_audit")) {
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
+      }
+      try {
+        const result = await integrityAudit(
+          args.decision_window_days !== undefined
+            ? { decision_window_days: args.decision_window_days }
+            : {},
+        );
+        // Faithful pass-through. toolResult() is the right envelope here even
+        // though a report is not a Decision: its isError computation keys off
+        // `decision` / `valid` / `error`, none of which are top-level fields of
+        // IntegrityReport, so a successful report flows through unchanged and
+        // un-annotated. No pass/fail boolean, "healthy" string, or status emoji
+        // is added — the three-way classification is the caller's to read.
+        return toolResult(result as unknown as Record<string, unknown>);
+      } catch (e) {
+        // Fail closed: a non-2xx means the audit could not complete (the server
+        // refuses a partial report rather than letting unevaluated checks read
+        // as passing ones). Surface the error; never substitute an empty report.
         return toolError(e);
       }
     },

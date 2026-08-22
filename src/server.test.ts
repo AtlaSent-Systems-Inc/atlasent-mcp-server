@@ -99,6 +99,7 @@ describe("tools/list", () => {
       "atlasent_get_policy",
       "atlasent_get_scim_user",
       "atlasent_get_siem_config",
+      "atlasent_integrity_audit",
       "atlasent_list_audit_events",
       "atlasent_list_evidence_exports",
       "atlasent_list_permits",
@@ -1119,6 +1120,171 @@ describe("atlasent_explain_authority", () => {
       },
     });
     assert.equal(result.isError, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_integrity_audit — read-only authority-graph integrity audit
+// ---------------------------------------------------------------------------
+
+const INTEGRITY_REPORT = {
+  schema_version: "1.0.0",
+  query: "integrity-audit",
+  organization_id: "11111111-1111-4111-8111-111111111111",
+  evaluated_at: "2026-08-22T00:00:00.000Z",
+  produced_by: ["authority_intelligence_integrity_audit_v1", "authority_integrity.ts"],
+  summary: { audited_scope: { decision_window_days: 90 }, findings_total: 3 },
+  findings: [
+    {
+      finding_type: "grant_without_role",
+      classification: "defect",
+      severity: "high",
+      subject_id: "22222222-2222-4222-8222-222222222222",
+      source_table: "authority_grants",
+      source_id: "g-1",
+      related_source_ids: ["r-1"],
+      effective_at: "2026-08-01T00:00:00.000Z",
+      evidence_posture: "observed",
+      reason: "grant references a role that no longer exists",
+    },
+    {
+      finding_type: "expired_delegation",
+      classification: "non_exercisable",
+      severity: "info",
+      subject_id: "33333333-3333-4333-8333-333333333333",
+      source_table: "authority_delegations",
+      source_id: "d-1",
+      related_source_ids: [],
+      effective_at: "2026-01-01T00:00:00.000Z",
+      evidence_posture: "observed",
+      reason: "delegation expired as configured",
+    },
+    {
+      finding_type: "scope_coverage_indeterminate",
+      classification: "unresolved",
+      severity: "medium",
+      subject_id: null,
+      source_table: null,
+      source_id: null,
+      related_source_ids: [],
+      effective_at: null,
+      evidence_posture: "derived",
+      reason: "scope could not be canonicalized",
+    },
+  ],
+  nodes: [{ id: "n-1", kind: "principal" }],
+  edges: [{ from: "n-1", to: "n-2", kind: "delegation" }],
+};
+
+describe("atlasent_integrity_audit", () => {
+  it("GETs /v1-authority-intelligence/integrity-audit with decision_window_days when supplied", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch(INTEGRITY_REPORT);
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_integrity_audit",
+      arguments: { decision_window_days: 90 },
+    });
+    assert.equal(result.isError, undefined);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].method, "GET");
+    const u = new URL(captured[0].url);
+    // The sub-route form is load-bearing: the edge function routes by
+    // stripping `^/v1-authority-intelligence/?`, so `/v1/authority-intelligence/...`
+    // would fall through to its 404.
+    assert.equal(u.pathname, "/v1-authority-intelligence/integrity-audit");
+    assert.equal(u.searchParams.get("decision_window_days"), "90");
+  });
+
+  it("omits decision_window_days entirely when the caller does not supply it", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch(INTEGRITY_REPORT);
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_integrity_audit",
+      arguments: {},
+    });
+    assert.equal(result.isError, undefined);
+    const u = new URL(captured[0].url);
+    // No client-side default is invented — the server owns the window.
+    assert.equal(u.searchParams.has("decision_window_days"), false);
+  });
+
+  it("passes the report through faithfully and synthesizes no pass/fail verdict", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch(INTEGRITY_REPORT);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_integrity_audit",
+      arguments: {},
+    });
+    const data = parseResult(result);
+    // A report carrying `defect` and `unresolved` findings is NOT an error
+    // envelope — the tool reports, it does not judge.
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(data, INTEGRITY_REPORT);
+    // The three-way classification survives intact.
+    const classifications = (data.findings as Array<{ classification: string }>).map(
+      (f) => f.classification,
+    );
+    assert.deepEqual(classifications, ["defect", "non_exercisable", "unresolved"]);
+    // No synthesized health verdict of any kind was added.
+    for (const key of ["healthy", "status", "passed", "ok", "verdict", "decision", "valid"]) {
+      assert.equal(Object.hasOwn(data, key), false, `must not synthesize "${key}"`);
+    }
+  });
+
+  it("surfaces a failed audit as an isError result rather than an empty report", async () => {
+    forceRemoteMode();
+    // The server refuses a partial report when augmentation fails, so that
+    // unevaluated checks can never read as passing ones.
+    globalThis.fetch = mockFetch(
+      {
+        code: "augmentation_failed",
+        message: "integrity audit could not complete its scope, delegation and snapshot analyses",
+      },
+      500,
+    );
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_integrity_audit",
+      arguments: {},
+    });
+    assert.equal(result.isError, true);
+    const data = parseResult(result);
+    assert.match(String(data.error), /could not complete/i);
+    // Fail closed: no report shape is fabricated on the failure path.
+    assert.equal(Object.hasOwn(data, "findings"), false);
+  });
+
+  it("surfaces a 403 (missing authority_intelligence:read scope) as an isError result", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ code: "forbidden", message: "forbidden" }, 403);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_integrity_audit",
+      arguments: {},
+    });
+    assert.equal(result.isError, true);
+    assert.match(String(parseResult(result).error), /Permission denied/i);
+  });
+
+  it("rejects an out-of-range decision_window_days at the tool layer", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch(INTEGRITY_REPORT);
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    for (const bad of [0, 3651, 1.5]) {
+      const result = await client.callTool({
+        name: "atlasent_integrity_audit",
+        arguments: { decision_window_days: bad },
+      });
+      assert.equal(result.isError, true, `decision_window_days=${bad} must be rejected`);
+    }
+    // Rejected at the schema boundary — no request ever reached the API.
+    assert.equal(captured.length, 0);
   });
 });
 
