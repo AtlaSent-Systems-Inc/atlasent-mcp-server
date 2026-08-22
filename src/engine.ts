@@ -725,6 +725,24 @@ export async function deletePolicy(params: DeletePolicyParams): Promise<unknown>
 }
 
 // ---------------------------------------------------------------------------
+// Authority intelligence (read-only OAG-1 authority-lineage explanation)
+// ---------------------------------------------------------------------------
+
+export interface ExplainAuthorityParams {
+  principal_id: string;
+  requested_scope: string;
+  resource_id?: string;
+}
+
+export async function explainAuthority(params: ExplainAuthorityParams): Promise<unknown> {
+  return get("/v1/authority-intelligence/explain-authority", {
+    principal_id: params.principal_id,
+    requested_scope: params.requested_scope,
+    resource_id: params.resource_id,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Execution evaluation recording
 // ---------------------------------------------------------------------------
 

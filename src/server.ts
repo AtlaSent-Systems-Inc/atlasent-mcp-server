@@ -22,6 +22,7 @@ import {
   listPolicies,
   getPolicy,
   listAuditEvents,
+  explainAuthority,
   createPolicy,
   updatePolicy,
   deletePolicy,
@@ -732,6 +733,68 @@ export function createServer(): McpServer {
           from: args.from,
           to: args.to,
           limit: args.limit,
+        });
+        return toolResult(result as Record<string, unknown>);
+      } catch (e) {
+        return toolError(e);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_explain_authority
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "atlasent_explain_authority",
+    {
+      title: "AtlaSent — Explain Authority",
+      description:
+        "Explain why a principal currently has (or lacks) authority for a scope. " +
+        "Answers 'why may principal P exercise scope/action A in organization O " +
+        "right now?' — strictly read-only, does not change /v1-evaluate, " +
+        "/v1-verify-permit, or any deny/hold/allow semantics; it explains the " +
+        "same facts those paths already read. Every matched authority mechanism " +
+        "(direct_grant, delegation, role_capability) is reported as its own " +
+        "path entry; every excluded or ambiguous relationship is reported as " +
+        "its own unresolved finding.",
+      inputSchema: z.object({
+        principal_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("The principal (UUID) whose authority is being explained."),
+        requested_scope: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe(
+            "The <environment>:<action> authority scope being explained (the same " +
+            "wire format /v1-evaluate's authority_scope and " +
+            "enterprise_permissions.permission already use), or a bare " +
+            "resource:action capability string.",
+          ),
+        resource_id: z
+          .string()
+          .max(MAX_FIELD_LEN)
+          .optional()
+          .describe("Optional resource ID to scope the explanation to."),
+      }),
+      annotations: {
+        title: "AtlaSent — Explain Authority",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_explain_authority")) {
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
+      }
+      try {
+        const result = await explainAuthority({
+          principal_id: args.principal_id,
+          requested_scope: args.requested_scope,
+          resource_id: args.resource_id,
         });
         return toolResult(result as Record<string, unknown>);
       } catch (e) {
