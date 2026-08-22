@@ -81,7 +81,7 @@ The guarantee: if `authorize()` does not return `allow`, the action code never r
 
 ```bash
 npm run build             # tsc -> dist/
-npm test                  # 149 unit tests, no network (count grows as tools are added)
+npm test                  # 152 unit tests, no network (count grows as tools are added)
 npm run test:integration  # live API; needs ATLASENT_API_KEY + ATLASENT_BASE_URL
 npm run demo              # end-to-end demo in local mode
 ```

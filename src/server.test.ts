@@ -94,6 +94,7 @@ describe("tools/list", () => {
       "atlasent_evaluate",
       "atlasent_evaluate_many",
       "atlasent_evaluate_stream",
+      "atlasent_explain_authority",
       "atlasent_get_evidence_export",
       "atlasent_get_policy",
       "atlasent_get_scim_user",
@@ -1020,6 +1021,104 @@ describe("atlasent_list_permits", () => {
     });
     assert.equal(result.isError, true);
     assert.match(String(parseResult(result).error), /Rate limited/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_explain_authority — read-only OAG-1 authority-lineage explanation
+// ---------------------------------------------------------------------------
+
+describe("atlasent_explain_authority", () => {
+  it("GETs /v1/authority-intelligence/explain-authority with all params in the query string", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch({
+      organization_id: "11111111-1111-4111-8111-111111111111",
+      principal_id: "22222222-2222-4222-8222-222222222222",
+      requested_scope: "production:deployment.production.approve",
+      resource_id: "svc-42",
+      authority_found: true,
+      paths: [{ mechanism: "role_capability", matched: true, edges: [] }],
+      unresolved: [],
+    });
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_explain_authority",
+      arguments: {
+        principal_id: "22222222-2222-4222-8222-222222222222",
+        requested_scope: "production:deployment.production.approve",
+        resource_id: "svc-42",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.authority_found, true);
+    assert.equal((data.paths as unknown[]).length, 1);
+    assert.equal(result.isError, undefined);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].method, "GET");
+    const u = new URL(captured[0].url);
+    assert.equal(u.pathname, "/v1/authority-intelligence/explain-authority");
+    assert.equal(u.searchParams.get("principal_id"), "22222222-2222-4222-8222-222222222222");
+    assert.equal(
+      u.searchParams.get("requested_scope"),
+      "production:deployment.production.approve",
+    );
+    assert.equal(u.searchParams.get("resource_id"), "svc-42");
+  });
+
+  it("omits resource_id from the query string when not supplied", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch({
+      organization_id: "11111111-1111-4111-8111-111111111111",
+      principal_id: "22222222-2222-4222-8222-222222222222",
+      requested_scope: "production:deployment.production.approve",
+      resource_id: null,
+      authority_found: false,
+      paths: [],
+      unresolved: [{ finding_type: "no_matching_grant" }],
+    });
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_explain_authority",
+      arguments: {
+        principal_id: "22222222-2222-4222-8222-222222222222",
+        requested_scope: "production:deployment.production.approve",
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(data.authority_found, false);
+    assert.equal((data.unresolved as unknown[]).length, 1);
+    const u = new URL(captured[0].url);
+    assert.equal(u.searchParams.has("resource_id"), false);
+  });
+
+  it("surfaces a non-2xx response as an isError result", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "forbidden" }, 403);
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_explain_authority",
+      arguments: {
+        principal_id: "22222222-2222-4222-8222-222222222222",
+        requested_scope: "production:deployment.production.approve",
+      },
+    });
+    assert.equal(result.isError, true);
+    assert.match(String(parseResult(result).error), /Permission denied/i);
+  });
+
+  it("rejects a missing/empty requested_scope at the tool layer", async () => {
+    forceRemoteMode();
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_explain_authority",
+      arguments: {
+        principal_id: "22222222-2222-4222-8222-222222222222",
+        requested_scope: "",
+      },
+    });
+    assert.equal(result.isError, true);
   });
 });
 
