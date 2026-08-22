@@ -1030,7 +1030,7 @@ describe("atlasent_list_permits", () => {
 // ---------------------------------------------------------------------------
 
 describe("atlasent_explain_authority", () => {
-  it("GETs /v1/authority-intelligence/explain-authority with all params in the query string", async () => {
+  it("GETs /v1-authority-intelligence/explain-authority with all params in the query string", async () => {
     forceRemoteMode();
     const { fn, captured } = captureFetch({
       organization_id: "11111111-1111-4111-8111-111111111111",
@@ -1058,7 +1058,11 @@ describe("atlasent_explain_authority", () => {
     assert.equal(captured.length, 1);
     assert.equal(captured[0].method, "GET");
     const u = new URL(captured[0].url);
-    assert.equal(u.pathname, "/v1/authority-intelligence/explain-authority");
+    // Hyphenated (edge-function-name) form — the real handler strips
+    // `/v1-authority-intelligence/` as a literal prefix; the slash form
+    // never matches and 404s. This was a real bug: the test previously
+    // pinned the wrong (slash) path as expected.
+    assert.equal(u.pathname, "/v1-authority-intelligence/explain-authority");
     assert.equal(u.searchParams.get("principal_id"), "22222222-2222-4222-8222-222222222222");
     assert.equal(
       u.searchParams.get("requested_scope"),
