@@ -726,6 +726,15 @@ export async function deletePolicy(params: DeletePolicyParams): Promise<unknown>
 
 // ---------------------------------------------------------------------------
 // Authority intelligence (read-only OAG-1 authority-lineage explanation)
+//
+// Path form: `/v1-<function>/<sub-route>` (the same shape as integrityAudit
+// below), NOT the `/v1/<resource>` shape used by the generic REST readers.
+// This was a real, confirmed bug: the handler routes by stripping
+// `^/v1-authority-intelligence/?` off the pathname and then matching the
+// first remaining segment against 'explain-authority'. The original slash
+// form left 'v1' as the first segment and fell through to the handler's
+// 404 on every real call. Do not "normalise" this path to match its
+// siblings in this file.
 // ---------------------------------------------------------------------------
 
 export interface ExplainAuthorityParams {
@@ -735,7 +744,7 @@ export interface ExplainAuthorityParams {
 }
 
 export async function explainAuthority(params: ExplainAuthorityParams): Promise<unknown> {
-  return get("/v1/authority-intelligence/explain-authority", {
+  return get("/v1-authority-intelligence/explain-authority", {
     principal_id: params.principal_id,
     requested_scope: params.requested_scope,
     resource_id: params.resource_id,
