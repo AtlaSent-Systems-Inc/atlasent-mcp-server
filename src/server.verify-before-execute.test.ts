@@ -98,8 +98,8 @@ describe("deploy_service verify-before-execute boundary", () => {
       ["/v1-evaluate", "/v1-verify-permit", "/v1-evaluate", "/v1-verify-permit"],
       "both authorization layers must be verified before the protected result exists",
     );
-    assert.equal(calls[0].body.action_type, "model.agent.execute_tool");
-    assert.equal(calls[1].body.action_type, "model.agent.execute_tool");
+    assert.equal(calls[0].body.action_type, "agent.tool.invoke");
+    assert.equal(calls[1].body.action_type, "agent.tool.invoke");
     assert.equal(calls[2].body.action_type, "production.deploy");
     assert.equal(calls[3].body.action_type, "production.deploy");
   });

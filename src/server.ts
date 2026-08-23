@@ -216,7 +216,7 @@ async function agentToolGate(
   // no production action can ever pass, defeating the two-layer pattern.
   // Fail-closed is preserved: a production call with no approvals still denies.
   const ctx: ActionContext = {
-    action_type: "model.agent.execute_tool",
+    action_type: "agent.tool.invoke",
     actor_id: actorId,
     environment,
     tool_name: toolName,
@@ -488,7 +488,7 @@ export function createServer(): McpServer {
         return toolResult(decision);
       }
 
-      // Outer Gate: model.agent.execute_tool is authorized and its Permit is
+      // Outer Gate: agent.tool.invoke is authorized and its Permit is
       // verified inside agentToolGate before this handler can continue.
       const agentGate = await agentToolGate("deploy_service", args.actor_id, args.environment, args.approvals);
       if (agentGate !== null) return toolResult(agentGate);
