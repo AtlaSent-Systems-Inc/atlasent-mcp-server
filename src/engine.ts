@@ -180,6 +180,44 @@ function baseUrl(): string {
   return (process.env.ATLASENT_BASE_URL ?? "https://api.atlasent.io/functions/v1").replace(/\/+$/, "");
 }
 
+// The generic REST family documented in atlasent-api's openapi.yaml — e.g.
+// /v1/policies, /v1/permits, /v1/audit/events, /v1/webhooks, /v1/orgs/... —
+// is served at the AtlaSent gateway/API DOMAIN ROOT, not under the Supabase
+// "/functions/v1" invocation base. Confirmed against atlasent-api's own
+// documented, working curl examples (docs/runbooks/PILOT_TROUBLESHOOTING.md,
+// docs/runbooks/PILOT_CUSTOMER_ACTIVATION.md):
+//   curl https://api.atlasent.io/v1/api-keys
+//   curl https://api.atlasent.io/v1/audit/events
+// and atlasent-control-plane's gateway (gateway/src/plugin.ts upstreamUrlFor):
+// it proxies incoming "/v1/*" requests verbatim onto the runtime base with no
+// path rewriting, so the caller must already address the gateway root, not
+// "/functions/v1". This is a DIFFERENT base than the dash-form direct
+// Supabase-function invocation used by /v1-evaluate, /v1-verify-permit, and
+// /v1-authority-intelligence/* (those live at
+// https://api.atlasent.io/functions/v1/v1-evaluate etc. and must keep using
+// baseUrl() unchanged).
+//
+// README documents ATLASENT_BASE_URL as the "/functions/v1" form (matching
+// the dash-form calls), so when it carries that suffix we strip it to
+// recover the gateway root for the slash-form REST family below. An
+// operator who has already pointed ATLASENT_BASE_URL at the gateway root
+// (no "/functions/v1" suffix — as this repo's own tests do) is passed
+// through unchanged.
+function restBaseUrl(): string {
+  const b = baseUrl();
+  const suffix = "/functions/v1";
+  return b.endsWith(suffix) ? b.slice(0, -suffix.length) : b;
+}
+
+// Choose the correct base for a given request path: the generic "/v1/<resource>"
+// REST family (single slash after "v1") uses restBaseUrl(); the dash-form
+// direct Supabase-function paths ("/v1-evaluate", "/v1-authority-intelligence/...")
+// use baseUrl() unchanged. Do not "simplify" this by string-matching "/v1" alone —
+// "/v1-evaluate" also starts with "/v1" and must NOT match here.
+function resolveBase(path: string): string {
+  return path.startsWith("/v1/") ? restBaseUrl() : baseUrl();
+}
+
 function handleHttpError(status: number, body: string): never {
   if (status === 401) throw new Error("Authentication failed — check your ATLASENT_API_KEY");
   if (status === 403) throw new Error("Permission denied — your key lacks the required scope");
@@ -196,7 +234,7 @@ function handleHttpError(status: number, body: string): never {
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${baseUrl()}${path}`, {
+  const res = await fetch(`${resolveBase(path)}${path}`, {
     method: "POST",
     headers: buildHeaders(),
     body: JSON.stringify(body),
@@ -210,7 +248,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function patch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${baseUrl()}${path}`, {
+  const res = await fetch(`${resolveBase(path)}${path}`, {
     method: "PATCH",
     headers: buildHeaders(),
     body: JSON.stringify(body),
@@ -224,7 +262,7 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function get<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
-  let url = `${baseUrl()}${path}`;
+  let url = `${resolveBase(path)}${path}`;
   if (params) {
     const qs = Object.entries(params)
       .filter(([, v]) => v !== undefined && v !== "")
@@ -695,7 +733,7 @@ export interface DeletePolicyParams {
 }
 
 async function del<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
-  let url = `${baseUrl()}${path}`;
+  let url = `${resolveBase(path)}${path}`;
   if (params) {
     const qs = Object.entries(params)
       .filter(([, v]) => v !== undefined && v !== "")
@@ -911,7 +949,7 @@ export async function deleteWebhook(params: DeleteWebhookParams): Promise<unknow
 // ---------------------------------------------------------------------------
 
 async function put<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${baseUrl()}${path}`, {
+  const res = await fetch(`${resolveBase(path)}${path}`, {
     method: "PUT",
     headers: buildHeaders(),
     body: JSON.stringify(body),
