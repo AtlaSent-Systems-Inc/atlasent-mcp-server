@@ -1404,6 +1404,61 @@ describe("atlasent_verify_permit (v1)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// REST base URL resolution — the generic "/v1/<resource>" family (openapi.yaml:
+// /v1/policies, /v1/permits, /v1/audit/events, etc.) is served at the AtlaSent
+// gateway/API domain root, NOT under the Supabase "/functions/v1" invocation
+// base used by dash-form paths like /v1-evaluate. Confirmed against
+// atlasent-api's documented curl examples (docs/runbooks/PILOT_TROUBLESHOOTING.md,
+// docs/runbooks/PILOT_CUSTOMER_ACTIVATION.md: `curl https://api.atlasent.io/v1/audit/events`)
+// and atlasent-control-plane's gateway (gateway/src/plugin.ts upstreamUrlFor),
+// which proxies "/v1/*" verbatim with no path rewriting. When an operator
+// configures ATLASENT_BASE_URL exactly as README recommends
+// (".../functions/v1"), every slash-form REST call must strip that suffix;
+// dash-form calls must keep it unchanged.
+// ---------------------------------------------------------------------------
+
+describe("REST base URL resolution (functions/v1 stripping)", () => {
+  it("strips /functions/v1 for slash-form /v1/<resource> calls", async () => {
+    forceRemoteMode();
+    process.env.ATLASENT_BASE_URL = "https://api.atlasent.io/functions/v1";
+    const fetcher = mockFetch({ valid: true, outcome: "allow" });
+    globalThis.fetch = fetcher;
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_verify_permit",
+      arguments: { permit_token: "pt_abc123", org_id: "org_abc" },
+    });
+    const url = fetcher.mock.calls[0].arguments[0] as string;
+    assert.equal(url, "https://api.atlasent.io/v1/permits/verify");
+  });
+
+  it("keeps /functions/v1 for dash-form /v1-evaluate calls", async () => {
+    forceRemoteMode();
+    process.env.ATLASENT_BASE_URL = "https://api.atlasent.io/functions/v1";
+    const fetcher = mockFetch({ decision: "allow", permit_token: "pt_1" });
+    globalThis.fetch = fetcher;
+    const { client } = await setup();
+    await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const url = fetcher.mock.calls[0].arguments[0] as string;
+    assert.equal(url, "https://api.atlasent.io/functions/v1/v1-evaluate");
+  });
+
+  it("passes a gateway-root ATLASENT_BASE_URL through unchanged for slash-form calls", async () => {
+    forceRemoteMode();
+    process.env.ATLASENT_BASE_URL = "https://api.test";
+    const fetcher = mockFetch({ valid: true, outcome: "allow" });
+    globalThis.fetch = fetcher;
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_verify_permit",
+      arguments: { permit_token: "pt_abc123", org_id: "org_abc" },
+    });
+    const url = fetcher.mock.calls[0].arguments[0] as string;
+    assert.equal(url, "https://api.test/v1/permits/verify");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // atlasent_create_approval_request
 // ---------------------------------------------------------------------------
 

@@ -257,7 +257,15 @@ ATLASENT_MCP_READONLY=1 \
 npx @atlasent/mcp-server
 ```
 
-`ATLASENT_BASE_URL` defaults to `https://api.atlasent.io/functions/v1`.
+`ATLASENT_BASE_URL` defaults to `https://api.atlasent.io/functions/v1` — this is the
+correct base for the core `evaluate` / `verify_permit` / `atlasent_evaluate` path and
+for other dash-form direct endpoints (`/v1-evaluate`, `/v1-verify-permit`,
+`/v1-authority-intelligence/...`). The generic REST tools (policies, permits, audit
+events, webhooks, SCIM, SIEM, evidence exports, approval requests) are served at the
+gateway/API domain root under slash-form paths (`/v1/policies`, `/v1/permits`, ...);
+the server automatically strips the `/functions/v1` suffix for those calls, so a
+single `ATLASENT_BASE_URL` value works for both families — no separate configuration
+needed.
 
 ## Read-only mode for live demos
 
