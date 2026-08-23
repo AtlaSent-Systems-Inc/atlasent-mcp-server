@@ -88,7 +88,7 @@ agent requests deploy_service
   → simulated deployment effect
 ```
 
-The current internal outer gate still uses the legacy policy-facing Action `model.agent.execute_tool`. That is **not** being presented as a new public Action taxonomy: public generic tool-action guidance uses Canon-backed `agent.tool.invoke`. Changing an existing policy-facing wire Action requires a separately controlled compatibility/migration decision.
+The internal outer gate uses the Canon-backed `agent.tool.invoke` Action (`CANON-000026` / `ACT-0029`) — the same public identifier documented throughout the AtlaSent ecosystem as the canonical generic AI-agent tool invocation. It previously used a legacy, uncatalogued identity, `model.agent.execute_tool`, which had no corresponding `action_classes` provisioning path in the runtime (no seed/migration anywhere creates a row with that slug) — so against a real, unmodified AtlaSent org the outer gate could only ever return `NO_ACTION_CLASS` deny, regardless of the tool-specific inner gate's own decision. Migrating the outer gate onto `agent.tool.invoke` gives it the real "AI Agent Safeguard" provisioning path (`atlasent-api`'s `seed_ai_agent_safeguard_fn.sql` / `provision-agent-pilot-org.sql`) that already exists for exactly this purpose. See AtlaSent-Systems-Inc/atlasent-mcp-server#121 for the full investigation and decision record.
 
 If either Decision is non-allow **or either Permit fails Verification**, no deployment result is produced.
 

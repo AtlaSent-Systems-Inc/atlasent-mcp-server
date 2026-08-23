@@ -697,7 +697,7 @@ describe("deploy_service (authorization-gated)", () => {
   });
 
   it("executes the deploy when policy allows", async () => {
-    // With the two-layer gate, both agentToolGate (model.agent.execute_tool)
+    // With the two-layer gate, both agentToolGate (agent.tool.invoke)
     // and the deploy-specific gate (production.deploy) must allow. Staging passes
     // both gates unconditionally in local mode, verifying the full execute path.
     // (The production-with-approvals path is covered by the regression test below.)
@@ -723,7 +723,7 @@ describe("deploy_service (authorization-gated)", () => {
 
   it("executes production deploys WITH approvals (agent gate forwards approvals)", async () => {
     // Regression guard. Before the agent gate forwarded approvals, a production
-    // deploy WITH approvals was still denied at the model.agent.execute_tool
+    // deploy WITH approvals was still denied at the agent.tool.invoke
     // gate (which never received them), so no production action could ever pass
     // the two-layer gate. The same approvals must now satisfy both layers.
     forceLocalMode();
