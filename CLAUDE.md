@@ -108,13 +108,18 @@ Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLAS
 
 ## Disabled Endpoints (atlasent-api)
 
-The following atlasent-api edge functions are intentionally **not deployed** on the runtime project and have **no corresponding MCP tools** in this repo. Do not add MCP tools that call these paths — they will always 404 in production. As of 2026-07-11 the disabled set is exactly **3 SSO skeleton handlers** (disabled 2026-06-02, enterprise-tier SSO not yet in pilot scope):
+The following atlasent-api edge functions are intentionally **not deployed** on the runtime project and have **no corresponding MCP tools** in this repo. Do not add MCP tools that call these paths — they will always 404 in production. **Updated 2026-08-28** — the disabled set has grown past the original 3 SSO skeleton handlers (disabled 2026-06-02); it is now 8 entries. None of the 5 added since have an MCP tool referencing them either (verified against `src/` — no `policy-rules`/`policy-simulate-layered`/`control-assurance`/`outcome-proposals` references):
 
 | Function name | Notes |
 |---|---|
 | `v1-sso-assertion-hook` | SSO SAML assertion hook — held back until SSO is in the V1 pilot surface |
 | `v1-sso-providers` | SSO identity-provider management — held back. Its notes previously said "re-enable with `v1-sso-connections`" — that cross-reference is stale as of 2026-08-10 since `v1-sso-connections` is now quarantined, not a re-enable target |
 | `v1-sso-connections` | **QUARANTINED 2026-08-10** (SSO Configuration Authority remediation) — not merely held back for scope. Had a real table-mismatch bug: POST/GET wrote/read `sso_connections` while GET /:id, PATCH, DELETE operated on `identity_providers`. `v1-sso` (shipped, live) already implements this resource correctly. Do not re-enable without a redesign |
+| `v1-policy-rules` | **QUARANTINED 2026-08-18** — plane-mismatch bug, not a scope gap: every route reads/writes `public.policy_rules`, which is confirmed absent on runtime production (that table lives only in `atlasent-console`'s migrations). Do not re-enable by just adding the table; needs a plane-ownership redesign first |
+| `v1-policy-simulate-layered` | **QUARANTINED 2026-08-24** (#2181 follow-up) — same absent-on-runtime `policy_rules` dependency as `v1-policy-rules` above, via its `bundle_id`-driven path. Same redesign prerequisite |
+| `v1-control-assurance` | **HELD BACK 2026-08-21** (CROSS-022) — fully implemented and tested, but kept out of `runtime-functions.json` because this repo's deploy model has no partial-rollout track and its `classification.json` production_eligibility is still experimental/disabled |
+| `v1-internal-control-assurance-write` | **HELD BACK 2026-08-21** (CROSS-022 step 4) — internal-worker-secret auth only; held back because no worker that calls it has been built yet, same manifest-has-no-partial-rollout reason as above |
+| `v1-outcome-proposals` | **HELD BACK 2026-08-27** (CROSS-042) — disabled-by-default AI Proposed Trajectories slice; production enablement requires first-party Anthropic/US-inference/ZDR attestation and security review not yet done |
 
 > **Re-enabled 2026-06-01 — do NOT re-add to the table:** `v1-redteam-runs`,
 > `v1-post-evaluations`, `v1-spiffe-validate`, `v1-policy-bundles`, `v1-marketplace-packs`,
