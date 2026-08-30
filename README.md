@@ -1,5 +1,7 @@
 # @atlasent/mcp-server
 
+MCP server that enforces authorize-before-execute for any MCP-compatible AI agent.
+
 [![npm version](https://img.shields.io/npm/v/@atlasent/mcp-server.svg)](https://www.npmjs.com/package/@atlasent/mcp-server)
 [![CI](https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
