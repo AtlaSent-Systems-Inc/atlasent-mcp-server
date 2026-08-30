@@ -1,25 +1,79 @@
 # Release Notes
 
-## Unreleased — v2.11.0 (prepared, not yet published)
+## v2.11.0 — 2026-06-09
 
-`package.json` / `server.json` are at `2.11.0`, but **no `v*` git tag has been
-pushed and no version past v1.0.0 has been published to npm or the MCP
-Registry from this repo** — `publish.yml` and `publish-mcp-registry.yml` only
-run on a real tag push (or manual dispatch), and neither has fired. This
-section documents what will ship once that first tag is cut.
+**Correction (2026-08-30):** this section previously read "Unreleased —
+prepared, not yet published," stating no version past v1.0.0 had ever
+shipped and that `git tag -l` showed no `v*` tags. Both claims were wrong —
+they were based on an incomplete local git clone rather than the live
+registries. Verified directly against the npm registry
+(`registry.npmjs.org/@atlasent/mcp-server`) and GitHub: **`2.11.0` has been
+published to npm since 2026-06-09** (`dist-tags.latest: "2.11.0"`, published
+via a manual `workflow_dispatch` run of `publish.yml`, not a tag push), and
+the `v2.11.0` git tag has existed since 2026-06-10 (`create-v2-11-0-tag.yml`
+run #1). Submission to the **MCP Registry remains genuinely outstanding**
+as of 2026-08-30 — confirmed via a live query against
+`registry.modelcontextprotocol.io`, which returns zero results for
+`atlasent`.
 
-### Tool surface growth since v1.0.0
+### Tool surface growth since v1.0.0 (what's actually in this published version)
 
-The two-tool v1.0.0 surface (`evaluate`, `verify_permit`) has grown into a
-much larger tool inventory (use MCP `tools/list` on the installed version for
-the exact, current set):
+**Correction (2026-08-30, review of this PR):** this section originally
+described `main`'s current tool inventory under the `v2.11.0` heading, which
+misrepresented several tools as part of the published release when they
+were added to `main` only *after* the tag. The published `v2.11.0` was cut
+from commit `c3b2add`; verified directly by diffing `src/server.ts` at that
+commit against `main`. The list below is now scoped to what `c3b2add`
+actually contains — see the "Unreleased" section further down for what has
+landed on `main` since.
 
-- `deploy_service` — protected two-layer deployment demo (authorize + verify
-  the outer `agent.tool.invoke` gate, then authorize + verify the
-  action-specific `production.deploy` permit) proving the enforcement
-  ordering end to end.
+The two-tool v1.0.0 surface (`evaluate`, `verify_permit`) grew into this by
+`v2.11.0`:
+
+- `deploy_service` — protected two-layer deployment demo. **In this
+  published version, the outer gate uses the legacy, uncatalogued
+  `model.agent.execute_tool` action type**, which has no corresponding
+  `action_classes` provisioning path in the runtime — against a real,
+  unmodified AtlaSent org this outer gate can only return `NO_ACTION_CLASS`
+  deny. See the "Unreleased" section for the fix.
 - `atlasent_evaluate` / `atlasent_verify_permit` — hosted V1 API-facing
   variants with a richer context envelope than the local demo tools.
+- `atlasent_trajectory_verify` — per-step trajectory drift detection.
+- Approval workflow tools (`atlasent_create_approval_request`,
+  `atlasent_resolve_approval_request`), execution-evidence recording
+  (`atlasent_record_execution_evaluation`), and Wave B tools
+  (`atlasent_evaluate_many`, `atlasent_evaluate_stream`).
+- Compliance tools: SCIM, SIEM config, evidence export.
+- VQP snapshot generation, verification, and drift-event tools.
+
+### Distribution changes since v1.0.0
+
+- `server.json` added for MCP Registry submission
+  (`io.github.atlasent-systems-inc/mcp-server`) — **submission itself is
+  still outstanding**, see the correction note above the tool list.
+- `smithery.yaml` added for Smithery discovery/install.
+
+### Install
+
+```bash
+npm install @atlasent/mcp-server
+```
+
+See the [README](./README.md) for Claude Desktop / Cursor / Windsurf config
+blocks and local/remote mode setup — note the README on `main` describes
+the current (unreleased) state, not necessarily what `v2.11.0` ships; the
+README bundled into the published npm tarball is frozen as of `c3b2add`.
+
+## Unreleased (on `main`, not yet in a published version or tag)
+
+Landed on `main` after the `v2.11.0` tag (`c3b2add`), with no version bump
+or new publish yet:
+
+- **Outer gate migrated to the Canon-backed `agent.tool.invoke`
+  action** (`CANON-000026` / `ACT-0029`), replacing the broken
+  `model.agent.execute_tool` identity described above. See
+  AtlaSent-Systems-Inc/atlasent-mcp-server#121 for the investigation and
+  decision record.
 - `atlasent_lookup_action` — read-only Canon lookup for Action Types, gate
   flags, authorization patterns, and evidence requirements.
 - `atlasent_atlas_lookup` — read-only lookup of canonical AtlaSent concepts
@@ -27,31 +81,13 @@ the exact, current set):
   Root).
 - `atlasent_integrity_audit` — read-only Authority-graph consistency audit
   (hosted mode only).
-- `atlasent_trajectory_verify` — per-step trajectory drift detection.
-- Approval workflow tools (`atlasent_create_approval_request`,
-  `atlasent_resolve_approval_request`), execution-evidence recording
-  (`atlasent_record_execution_evaluation`), and Wave B tools
-  (`atlasent_evaluate_many`, `atlasent_evaluate_stream`, `atlasent_query`).
-- Compliance tools: SCIM, SIEM config, evidence export.
-- VQP snapshot generation, verification, and drift-event tools.
-- A Streamable HTTP transport in addition to stdio.
-
-### Distribution changes since v1.0.0
-
-- `server.json` added for MCP Registry submission
-  (`io.github.atlasent-systems-inc/mcp-server`).
-- `smithery.yaml` added for Smithery discovery/install.
+- `atlasent_explain_authority`.
 - README now documents Cursor and Windsurf install, in addition to Claude
   Desktop.
 
-### Install (once published)
-
-```bash
-npm install @atlasent/mcp-server
-```
-
-See the [README](./README.md) for Claude Desktop / Cursor / Windsurf config
-blocks and local/remote mode setup.
+Anyone relying on the currently-published `2.11.0` package does not have
+the above; use MCP `tools/list` on the installed version for the exact,
+current set rather than trusting this doc.
 
 ---
 
