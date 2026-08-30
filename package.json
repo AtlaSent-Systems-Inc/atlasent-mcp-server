@@ -55,7 +55,12 @@
     "policy",
     "agent",
     "ai",
-    "claude"
+    "claude",
+    "cursor",
+    "windsurf",
+    "guardrails",
+    "ai-agent-security",
+    "execution-boundary"
   ],
   "license": "Apache-2.0",
   "mcpName": "io.github.atlasent-systems-inc/mcp-server"
