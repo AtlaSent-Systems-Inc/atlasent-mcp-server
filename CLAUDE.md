@@ -50,7 +50,7 @@ examples/
 .github/workflows/
   ci.yml              build + test on push/PR, Node 18/20/22 matrix
   integration.yml     nightly integration tests against the hosted API
-  publish.yml         npm publish --provenance on v* tag push
+  publish.yml         npm publish --access public (cosign-signed tarball) on v* tag push, gated by an AtlaSent release check
 ```
 
 ## Interception point
@@ -149,7 +149,7 @@ See `atlasent-api/docs/runbooks/CRON_VAULT_SECRETS.md` for the full setup proced
 
 ## npm publishing
 
-Scoped package `@atlasent/mcp-server`, `publishConfig.access: public`. Tag `v*` triggers `publish.yml` which runs build, tests, and `npm publish --provenance` using the `NPM_TOKEN` repo secret.
+Scoped package `@atlasent/mcp-server`, `publishConfig.access: public`. Tag `v*` triggers `publish.yml`, which runs an AtlaSent `package.release` gate, then build, tests, and `npm publish --access public` using the `NPM_TOKEN` repo secret. **Not `--provenance`** — provenance requires a public source repo, and this repo is private; a cosign keyless-signed tarball (uploaded as a build artifact) is the supply-chain attestation instead. **As of 2026-08-30, no `v*` tag has ever been pushed** — `git tag -l` is empty, so `publish.yml` has never fired from a real tag push, and no version of this package has been published to npm from this repo. `create-v2-11-0-tag.yml` exists specifically to cut the first tag (pinned to a specific historical commit SHA, not necessarily current `HEAD`) and is itself gated by the same AtlaSent check — run it (or push a `v*` tag directly) to actually ship the first release.
 
 ## MCP Registry publishing
 

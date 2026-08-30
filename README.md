@@ -1,5 +1,9 @@
 # @atlasent/mcp-server
 
+[![npm version](https://img.shields.io/npm/v/@atlasent/mcp-server.svg)](https://www.npmjs.com/package/@atlasent/mcp-server)
+[![CI](https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+
 **Authorization for consequential AI-agent actions at the execution boundary.**
 
 AtlaSent performs **execution-time authorization**: determine whether a specific consequential Action is authorized now, issue a bounded Permit on `allow`, verify that Permit at the execution Gate, and only then allow the governed native effect.
@@ -309,7 +313,53 @@ Shadow/advisory evaluation is useful for observation, but it is not the same as 
 }
 ```
 
-The same server can be configured in other MCP-compatible hosts using their normal MCP server configuration mechanism.
+## Cursor
+
+Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "atlasent": {
+      "command": "npx",
+      "args": ["-y", "@atlasent/mcp-server"],
+      "env": {
+        "ATLASENT_MODE": "remote",
+        "ATLASENT_API_KEY": "ask_live_xxxxxxxxxxxxxxxx",
+        "ATLASENT_BASE_URL": "https://api.atlasent.io/functions/v1",
+        "ATLASENT_MCP_READONLY": "1"
+      }
+    }
+  }
+}
+```
+
+## Windsurf
+
+Add to `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "atlasent": {
+      "command": "npx",
+      "args": ["-y", "@atlasent/mcp-server"],
+      "env": {
+        "ATLASENT_MODE": "remote",
+        "ATLASENT_API_KEY": "ask_live_xxxxxxxxxxxxxxxx",
+        "ATLASENT_BASE_URL": "https://api.atlasent.io/functions/v1",
+        "ATLASENT_MCP_READONLY": "1"
+      }
+    }
+  }
+}
+```
+
+## Other MCP clients
+
+The same server can be configured in any other MCP-compatible host using its normal MCP server configuration mechanism (`command: npx`, `args: ["-y", "@atlasent/mcp-server"]`, and the same `env` block shown above).
+
+This server is also distributed via the [official MCP Registry](https://registry.modelcontextprotocol.io) (`io.github.atlasent-systems-inc/mcp-server`, manifest at [`server.json`](./server.json)) and [Smithery](https://smithery.ai) (config at [`smithery.yaml`](./smithery.yaml)) — a registry- or Smithery-aware host can discover and install it without a hand-written config block.
 
 ## Development
 
