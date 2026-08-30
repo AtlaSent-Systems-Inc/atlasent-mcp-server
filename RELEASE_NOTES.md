@@ -1,12 +1,20 @@
 # Release Notes
 
-## Unreleased — v2.11.0 (prepared, not yet published)
+## v2.11.0 — 2026-06-09
 
-`package.json` / `server.json` are at `2.11.0`, but **no `v*` git tag has been
-pushed and no version past v1.0.0 has been published to npm or the MCP
-Registry from this repo** — `publish.yml` and `publish-mcp-registry.yml` only
-run on a real tag push (or manual dispatch), and neither has fired. This
-section documents what will ship once that first tag is cut.
+**Correction (2026-08-30):** this section previously read "Unreleased —
+prepared, not yet published," stating no version past v1.0.0 had ever
+shipped and that `git tag -l` showed no `v*` tags. Both claims were wrong —
+they were based on an incomplete local git clone rather than the live
+registries. Verified directly against the npm registry
+(`registry.npmjs.org/@atlasent/mcp-server`) and GitHub: **`2.11.0` has been
+published to npm since 2026-06-09** (`dist-tags.latest: "2.11.0"`, published
+via a manual `workflow_dispatch` run of `publish.yml`, not a tag push), and
+the `v2.11.0` git tag has existed since 2026-06-10 (`create-v2-11-0-tag.yml`
+run #1). Submission to the **MCP Registry remains genuinely outstanding**
+as of 2026-08-30 — confirmed via a live query against
+`registry.modelcontextprotocol.io`, which returns zero results for
+`atlasent`.
 
 ### Tool surface growth since v1.0.0
 
@@ -44,7 +52,7 @@ the exact, current set):
 - README now documents Cursor and Windsurf install, in addition to Claude
   Desktop.
 
-### Install (once published)
+### Install
 
 ```bash
 npm install @atlasent/mcp-server
