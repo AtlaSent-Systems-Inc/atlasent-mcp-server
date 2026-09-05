@@ -377,6 +377,47 @@ describe("evaluate (remote mode)", () => {
     assert.equal(data.requires_human_approval, undefined);
   });
 
+  // CD-4 (atlasent-api CANONICAL_EVALUATE_CONTRACT.md compat-debt ledger):
+  // the deployed v1-evaluate/handler.ts sets top-level deny_code/deny_reason
+  // on the vast majority of its deny paths (56 call sites) -- the nested
+  // `denial` object above is reserved for a single, narrower caller-denial
+  // case. Every test above this point only ever mocked the nested shape, so
+  // this exact gap shipped invisibly. These two prove the real, common shape
+  // is read correctly.
+  it("surfaces deny_code from the TOP-LEVEL field (the common real handler shape)", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      decision: "deny",
+      deny_code: "INSUFFICIENT_APPROVALS",
+      deny_reason: "a human must approve this action class",
+      request_id: "req_hil_top",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "deny");
+    assert.equal(data.deny_code, "INSUFFICIENT_APPROVALS");
+    assert.equal(data.requires_human_approval, true);
+    assert.equal((data.reasons as string[])[0], "a human must approve this action class");
+    assert.equal(result.isError, true);
+  });
+
+  it("surfaces deny_code from the top-level field on hold/escalate too", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({
+      decision: "escalate",
+      deny_code: "REQUIRES_WITNESS",
+      deny_reason: "needs witness",
+      request_id: "req_hold_top",
+    });
+    const { client } = await setup();
+    const result = await client.callTool({ name: "evaluate", arguments: EVAL_ARGS });
+    const data = parseResult(result);
+    assert.equal(data.decision, "hold");
+    assert.equal(data.deny_code, "REQUIRES_WITNESS");
+    assert.equal((data.reasons as string[])[0], "needs witness");
+  });
+
   it("sends flat handler.ts body and correct auth headers", async () => {
     forceRemoteMode();
     process.env.ATLASENT_ANON_KEY = "test-anon";
