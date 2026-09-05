@@ -286,7 +286,20 @@ async function get<T>(path: string, params?: Record<string, string | undefined>)
 //   { decision: "allow"|"deny"|"hold"|"escalate",
 //     permit_token?: string, request_id?: string, expires_at?: string,
 //     envelope_hash?: string,
+//     deny_code?: string, deny_reason?: string,
 //     denial?: { reasons: string[], code: string } }
+//
+// `deny_code`/`deny_reason` are TOP-LEVEL fields on the real response
+// (canonical-evaluate.schema.json in atlasent-api) and are what the vast
+// majority of the deployed handler's deny paths actually set (56 call
+// sites vs. a single conditional `denial` object reserved for a narrower
+// caller-denial case) — this repo's own CANONICAL_EVALUATE_CONTRACT.md
+// compat-debt ledger (CD-4) already named this exact drift: MCP read only
+// the nested `denial.code` while the runtime emits top-level `deny_code`,
+// so on the common path `deny_code` came back `undefined` here and the
+// INSUFFICIENT_APPROVALS -> requires_human_approval routing signal below
+// was silently lost even though the deny itself was (correctly) still
+// fail-closed. Read top-level first, nested `denial` as a fallback.
 //
 // `envelope_hash` is the sha-256 of the canonical ContextEnvelopeV1 the API
 // records for the evaluation (see _shared/context-envelope-v1.ts in
@@ -300,6 +313,8 @@ interface RawEvaluate {
   reasons?: string[];
   request_id?: string;
   envelope_hash?: string;
+  deny_code?: string;
+  deny_reason?: string;
   denial?: { reasons?: string[]; code?: string };
   conditions?: string[];
   hold_id?: string;
@@ -372,11 +387,16 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   }
 
   if (data.decision === "hold" || data.decision === "escalate") {
-    const reasons = data.denial?.reasons ?? data.reasons ?? ["Held for human review"];
+    const reasons =
+      (data.deny_reason ? [data.deny_reason] : undefined) ??
+      data.denial?.reasons ??
+      data.reasons ??
+      ["Held for human review"];
+    const holdCode = data.deny_code ?? data.denial?.code;
     return {
       decision: "hold",
       reasons,
-      ...(data.denial?.code && { deny_code: data.denial.code }),
+      ...(holdCode && { deny_code: holdCode }),
       ...(data.hold_id && { hold_id: data.hold_id }),
       ...(audit_id && { audit_id }),
       ...(envelope_hash && { envelope_hash }),
@@ -384,8 +404,12 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   }
 
   // Anything else (including "deny" or an unknown decision) is fail-closed.
-  const reasons = data.denial?.reasons ?? data.reasons ?? [`Denied (decision=${data.decision})`];
-  const deny_code = data.denial?.code;
+  const reasons =
+    (data.deny_reason ? [data.deny_reason] : undefined) ??
+    data.denial?.reasons ??
+    data.reasons ??
+    [`Denied (decision=${data.decision})`];
+  const deny_code = data.deny_code ?? data.denial?.code;
   const out: Decision = {
     decision: "deny",
     reasons,
