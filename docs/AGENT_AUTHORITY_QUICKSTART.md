@@ -69,27 +69,13 @@ A failed rehearsal should produce an actionable resolution: why it failed, who o
 ## Runtime example
 
 ```ts
-const toolArguments = {
-  repository: "example/customer-production",
-  pull_request: 123,
-  expected_head_sha: "0123456789abcdef...",
-};
-
-// Use an RFC 8785-style canonical JSON encoder (or the integration's
-// documented equivalent), not a raw JSON.stringify whose key order can vary.
-const invocation = {
-  tool: "github.merge_pull_request",
-  target: "example/customer-production#123",
-  environment: "production",
-  arguments_sha256: sha256(canonicalJson(toolArguments)),
-};
-
-const decision = await evaluate({
-  action_type: "agent.tool.invoke",
+const action = {
+  action_type: "production.deploy",
   actor_id: "agent:ops-bot",
-  environment: invocation.environment,
-  context: invocation,
-});
+  environment: "production",
+};
+
+const decision = await evaluate(action);
 
 if (decision.decision !== "allow") {
   throw new Error("Not authorized: stop and surface the resolution path");
@@ -97,27 +83,27 @@ if (decision.decision !== "allow") {
 
 const verification = await verify_permit({
   permit_token: decision.permit_token,
-  action_type: "agent.tool.invoke",
-  actor_id: "agent:ops-bot",
-  environment: invocation.environment,
-  context: invocation,
+  ...action,
 });
 
 if (!verification.valid) {
-  throw new Error("Authorization artifact did not verify for this exact tool call");
+  throw new Error("Authorization artifact did not verify");
 }
 
-// Execute exactly the arguments whose canonical digest was evaluated and
-// verified. Any tool, target, environment, or argument change requires a new
-// evaluation and permit.
-const result = await runProtectedTool(toolArguments);
+const result = await runProtectedDeployment();
 ```
 
-The generic `agent.tool.invoke` action class is not authorization for any
-arbitrary tool call. The concrete tool, target, environment, and canonical
-arguments/payload digest are part of the authorization boundary and must be
-identical at evaluation, verification, and execution. Prefer a more specific
-Canon action type when one exists.
+Use a specific Canon action type for the protected effect. The MCP `evaluate`
+tool currently binds only the fields in its published schema: action type,
+actor, environment, approvals, and change window. It does **not** accept an
+arbitrary `context`, tool name, target, or argument digest.
+
+Consequently, this MCP-only pattern is sufficient only when the selected action
+type and policy already identify the protected effect at the required
+granularity. If authorization must bind a concrete target or material payload,
+use an AtlaSent API or integration path that accepts those fields at both
+evaluation and permit verification. Do not treat `agent.tool.invoke` as
+blanket authorization for an unspecified native tool call.
 
 ## Agent-facing vocabulary
 
