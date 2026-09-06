@@ -69,11 +69,13 @@ A failed rehearsal should produce an actionable resolution: why it failed, who o
 ## Runtime example
 
 ```ts
-const decision = await evaluate({
-  action_type: "agent.tool.invoke",
+const action = {
+  action_type: "production.deploy",
   actor_id: "agent:ops-bot",
   environment: "production",
-});
+};
+
+const decision = await evaluate(action);
 
 if (decision.decision !== "allow") {
   throw new Error("Not authorized: stop and surface the resolution path");
@@ -81,17 +83,27 @@ if (decision.decision !== "allow") {
 
 const verification = await verify_permit({
   permit_token: decision.permit_token,
-  action_type: "agent.tool.invoke",
-  actor_id: "agent:ops-bot",
-  environment: "production",
+  ...action,
 });
 
 if (!verification.valid) {
   throw new Error("Authorization artifact did not verify");
 }
 
-const result = await runProtectedTool();
+const result = await runProtectedDeployment();
 ```
+
+Use a specific Canon action type for the protected effect. The MCP `evaluate`
+tool currently binds only the fields in its published schema: action type,
+actor, environment, approvals, and change window. It does **not** accept an
+arbitrary `context`, tool name, target, or argument digest.
+
+Consequently, this MCP-only pattern is sufficient only when the selected action
+type and policy already identify the protected effect at the required
+granularity. If authorization must bind a concrete target or material payload,
+use an AtlaSent API or integration path that accepts those fields at both
+evaluation and permit verification. Do not treat `agent.tool.invoke` as
+blanket authorization for an unspecified native tool call.
 
 ## Agent-facing vocabulary
 
