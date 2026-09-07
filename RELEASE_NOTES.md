@@ -84,6 +84,11 @@ or new publish yet:
 - `atlasent_explain_authority`.
 - README now documents Cursor and Windsurf install, in addition to Claude
   Desktop.
+- **`atlasent_trajectory_verify` removed** — the runtime has no
+  `/v1/trajectory-verify` endpoint (part of the atlasent-api#2932
+  public-contract-honesty cleanup lane). See `docs/TRAJECTORY_VERIFY_DEPRECATED.md`.
+  The `2.11.0` release above still had it; do not reintroduce it without a
+  real backing endpoint.
 
 Anyone relying on the currently-published `2.11.0` package does not have
 the above; use MCP `tools/list` on the installed version for the exact,
