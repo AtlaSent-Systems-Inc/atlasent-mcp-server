@@ -31,7 +31,6 @@ src/
   v2Client.ts                   HTTP clients for Wave A endpoints; FeatureNotEnabledError on 404
   complianceTools.ts            SCIM, SIEM config, evidence export MCP tools
   vqpTools.ts                   VQP snapshot generation, verification, drift event tools
-  trajectoryVerify.ts           atlasent_trajectory_verify: per-step trajectory drift detection
   streamableHttp.ts             Streamable HTTP transport (MCP HTTP mode)
   index.ts                      CLI entry point; connects stdio transport
   server.test.ts                Unit tests: tools/list, evaluate (local + remote), verify_permit, deploy_service
@@ -39,7 +38,6 @@ src/
   complianceTools.test.ts       Compliance tool unit tests
   v2Tools.test.ts               V2 Wave B tool unit tests
   v2Client.test.ts              V2 HTTP client unit tests
-  trajectoryVerify.test.ts      Trajectory verify unit tests
   streamableHttp.integration.test.ts  Streamable HTTP transport integration tests
   integration.test.ts           Live-API tests; require ATLASENT_API_KEY + ATLASENT_BASE_URL, skip otherwise
   integration.write.test.ts     Live-API write tests (mutating tools)

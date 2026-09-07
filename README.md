@@ -219,7 +219,7 @@ Output: the integrity report, verbatim
 
 Read `summary.audited_scope` before concluding anything from an empty `findings` list — a short decision window is not an absence of findings. If the audit cannot complete, the server refuses rather than returning a partial report, and this tool surfaces that as an error rather than an empty report.
 
-The server also exposes policy, permit, approval, evidence, compliance, trajectory, and VQP tools. Use MCP `tools/list` for the exact tool inventory supported by the installed version.
+The server also exposes policy, permit, approval, evidence, compliance, and VQP tools. Use MCP `tools/list` for the exact tool inventory supported by the installed version.
 
 ## Approval workflow
 

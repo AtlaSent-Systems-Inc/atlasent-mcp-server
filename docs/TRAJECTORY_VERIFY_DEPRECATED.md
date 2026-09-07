@@ -1,8 +1,8 @@
 # `atlasent_trajectory_verify` is not a supported MCP tool
 
-`atlasent_trajectory_verify` is being removed from the public MCP tool surface.
+`atlasent_trajectory_verify` has been removed from the public MCP tool surface — it is no longer registered and cannot be called.
 
-The runtime does not implement `/v1/trajectory-verify`. The existing MCP registration therefore cannot complete a real authorization check and must not be presented to agents as a usable capability.
+The runtime does not implement `/v1/trajectory-verify`. The tool could never complete a real authorization check and must not be presented to agents as a usable capability.
 
 For execution-boundary authorization, use the shipped AtlaSent flow:
 
