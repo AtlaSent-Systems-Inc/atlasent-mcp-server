@@ -132,6 +132,64 @@ describe("atlasent_evaluate_many", () => {
     assert.equal(result.isError, true);
   });
 
+  it("surfaces an escalate item as a distinct error (C.MCP1)", async () => {
+    // Regression test: checkEscalate() previously only looked for a
+    // top-level `decision` field, which the real batch response never has —
+    // decisions live per-item inside items[]. This must now be caught.
+    globalThis.fetch = mock.fn(async () =>
+      jsonResponse({
+        batch_id: "11111111-1111-4111-8111-111111111111",
+        items: [
+          { decision: "allow", permit_token: "pt_a" },
+          { decision: "escalate", reasons: ["needs human review"] },
+        ],
+        partial: false,
+      }),
+    );
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_evaluate_many",
+      arguments: {
+        items: [
+          { action: "deploy", agent: "agent-1" },
+          { action: "wire_transfer", agent: "agent-1" },
+        ],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(result.isError, true);
+    assert.equal(data.error, "escalate");
+    assert.deepEqual(data.escalated_indices, [1]);
+    // The non-escalated item's decision must not be lost.
+    assert.equal((data.items as Array<Record<string, unknown>>)[0].decision, "allow");
+  });
+
+  it("does not flag escalate when no item escalates", async () => {
+    globalThis.fetch = mock.fn(async () =>
+      jsonResponse({
+        batch_id: "22222222-2222-4222-8222-222222222222",
+        items: [
+          { decision: "allow", permit_token: "pt_a" },
+          { decision: "deny", reasons: ["no approval"] },
+        ],
+        partial: false,
+      }),
+    );
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_evaluate_many",
+      arguments: {
+        items: [
+          { action: "deploy", agent: "agent-1" },
+          { action: "delete", agent: "agent-1" },
+        ],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(result.isError, undefined);
+    assert.equal(data.error, undefined);
+  });
+
   it("forwards optional context per item", async () => {
     const captured: { body: unknown }[] = [];
     globalThis.fetch = mock.fn(async (_url, init) => {
@@ -202,6 +260,28 @@ describe("atlasent_evaluate_stream", () => {
     assert.equal(data.partial, true);
     const items = data.items as Array<Record<string, unknown>>;
     assert.ok("error" in items[0]);
+  });
+
+  it("surfaces an escalate item as a distinct error (C.MCP1)", async () => {
+    const sse =
+      `event: decision\ndata: ${JSON.stringify({ decision: "allow", permit_token: "p1" })}\n\n` +
+      `event: decision\ndata: ${JSON.stringify({ decision: "escalate", reasons: ["needs human review"] })}\n\n` +
+      `event: complete\ndata: ${JSON.stringify({ batch_id: "77777777-7777-4777-8777-777777777777", partial: false })}\n\n`;
+    globalThis.fetch = mock.fn(async () => sseResponse(sse));
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_evaluate_stream",
+      arguments: {
+        items: [
+          { action: "deploy", agent: "agent-1" },
+          { action: "wire_transfer", agent: "agent-1" },
+        ],
+      },
+    });
+    const data = parseResult(result);
+    assert.equal(result.isError, true);
+    assert.equal(data.error, "escalate");
+    assert.deepEqual(data.escalated_indices, [1]);
   });
 
   it("surfaces 404 as feature_not_enabled with v2_streaming flag", async () => {

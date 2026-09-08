@@ -13,8 +13,10 @@
  *
  * Behavior-aware gates (C.MCP1): when ATLASENT_BEHAVIOR_BASE_URL is set
  * and v2_behavior_conditioning is active, user state is attached to each
- * item's context before forwarding. escalate decisions surface as a
- * distinct { error: "escalate" } result. Behavior fetch errors are
+ * item's context before forwarding. Any item whose decision comes back
+ * "escalate" surfaces as a distinct { error: "escalate" } result (see
+ * checkEscalate() below — it scans items[], the real per-item location of
+ * `decision` in the batch/stream response shape). Behavior fetch errors are
  * fail-open (the request proceeds without behavior context).
  *
  * Fail-closed audit (C.MCP3): every tool call emits a mcp.request audit
@@ -123,21 +125,61 @@ async function enrichItemsWithBehavior(
 }
 
 // C.MCP1: map escalate decision to distinct error surface.
+//
+// BUG FIX: this previously only checked for a top-level `decision` field on
+// the raw result. That shape never occurs here — evaluateBatch/evaluateStream
+// both return { batch_id, items: unknown[], partial } (see BatchEvaluateResponse
+// / StreamEvaluateResponse in v2Client.ts and the "returns canonical batch
+// shape" test fixtures in v2Tools.test.ts, which put `decision` on each
+// element of `items`, never on the envelope). So the top-level check could
+// never fire for atlasent_evaluate_many or atlasent_evaluate_stream — an
+// escalate decision buried in items[] silently passed through as an ordinary
+// non-error result, exactly the "refuses silently" failure mode C.MCP1
+// (V2_ROLLOUT.md) exists to prevent. Untested (no "escalate" reference
+// anywhere in v2Tools.test.ts), which is how this went unnoticed.
+//
+// Fixed to scan `items[]` for any element with `decision === "escalate"`.
+// The top-level check is kept as a defensive fallback for a future
+// single-decision response shape reusing this helper; it is not what either
+// current caller returns.
 function checkEscalate(result: unknown): ReturnType<typeof toolResult> | null {
-  if (
-    result &&
-    typeof result === "object" &&
-    !Array.isArray(result) &&
-    (result as Record<string, unknown>).decision === "escalate"
-  ) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+  const obj = result as Record<string, unknown>;
+
+  if (obj.decision === "escalate") {
     return toolResult({
       error: "escalate",
-      reasons: (result as Record<string, unknown>).reasons ?? [],
+      reasons: obj.reasons ?? [],
       message:
         "Decision returned escalate — route to human review before proceeding.",
     });
   }
-  return null;
+
+  const items = Array.isArray(obj.items) ? obj.items : null;
+  if (!items) return null;
+
+  const escalatedIndices = items
+    .map((item, i) =>
+      item &&
+      typeof item === "object" &&
+      !Array.isArray(item) &&
+      (item as Record<string, unknown>).decision === "escalate"
+        ? i
+        : -1,
+    )
+    .filter((i) => i !== -1);
+  if (escalatedIndices.length === 0) return null;
+
+  return toolResult({
+    error: "escalate",
+    escalated_indices: escalatedIndices,
+    batch_id: obj.batch_id,
+    items: obj.items,
+    partial: obj.partial,
+    message:
+      `${escalatedIndices.length} of ${items.length} item(s) returned ` +
+      "escalate — route to human review before proceeding.",
+  });
 }
 
 /**
