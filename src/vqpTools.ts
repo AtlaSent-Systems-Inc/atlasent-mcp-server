@@ -9,6 +9,22 @@
  * generate and verify call Supabase edge functions directly using
  * ATLASENT_SUPABASE_URL + ATLASENT_SUPABASE_SERVICE_ROLE_KEY.
  * audit_summary and drift_events use the standard ATLASENT_API_KEY REST API.
+ *
+ * BUG FIX (response-shape mismatch, same class as the v2Tools.ts escalate
+ * fix): `toolResult()` (decision.ts) only sets `isError` when the payload
+ * carries a top-level `decision`, `valid`, or `error` field. The real
+ * `v1-verify-vqp` success response (200/201) carries none of those — its
+ * tamper signal is `hash_match: false` and its drift signal is
+ * `verdict_changed: true` (see atlasent-api
+ * supabase/functions/v1-verify-vqp/index.ts). So a tampered snapshot
+ * (`hash_match: false`) — the exact condition this tool's own description
+ * says it "detects" — was silently returned as an ordinary successful
+ * result (`isError` unset), indistinguishable from a clean verification.
+ * checkVqpIntegrity() below promotes `hash_match: false` to an explicit
+ * error result so a host gating on `isError` actually sees it.
+ * Untested before this fix (no dedicated vqpTools.test.ts existed at all —
+ * the only prior reference to these four tool names was a tools/list
+ * membership check in server.test.ts), which is how this went unnoticed.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -38,6 +54,30 @@ function isReadOnly(): boolean {
     process.env.ATLASENT_MCP_READONLY === "1" ||
     process.env.ATLASENT_MCP_READONLY === "true"
   );
+}
+
+// See the file header "BUG FIX" note. Promotes the documented tamper
+// signal in a v1-verify-vqp response (`hash_match: false`) to an explicit
+// MCP error result, since it is not a `decision`/`valid`/`error` field
+// toolResult() would otherwise recognize as a failure.
+//
+// `verdict_changed: true` on its own (hash intact, AI re-run scored
+// differently) is deliberately NOT promoted here — the field is already
+// visible to the caller in the ordinary successful payload, and a fresh AI
+// call scoring a few points differently is expected model variance, not
+// evidence of tampering. Only a broken hash chain is a hard failure.
+function checkVqpIntegrity(result: unknown): Record<string, unknown> | null {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+  const obj = result as Record<string, unknown>;
+  if (obj.hash_match !== false) return null;
+  return {
+    ...obj,
+    error: "hash_mismatch",
+    message:
+      "VQP prompt_hash mismatch — the re-derived prompt does not match the " +
+      "stored snapshot. Treat as tampering or undetected bundle drift; do " +
+      "not rely on this snapshot as compliance evidence until investigated.",
+  };
 }
 
 // ── Supabase edge function client (service-role) ─────────────────────────────────
@@ -223,6 +263,10 @@ export function registerVqpTools(server: McpServer): void {
             snapshot_id: args.snapshot_id,
             ...(args.rerun !== undefined ? { rerun: args.rerun } : {}),
           });
+          // BUG FIX: surface hash_match: false as an explicit error — see
+          // checkVqpIntegrity() and the file-header note above.
+          const integrityResult = checkVqpIntegrity(result);
+          if (integrityResult) return toolResult(integrityResult);
           return toolResult(result as Record<string, unknown>);
         } catch (e) {
           return toolError(e);
