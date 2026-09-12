@@ -39,8 +39,8 @@ export const CANON_ACT_CATALOG: ActSpecEntry[] = [
     "id": "ACT-0001",
     "canon_id": "CANON-000001",
     "slug": "production.deploy",
-    "display_name": "Production Deploy",
-    "description": "Authorization gate for deploying code, configuration, or infrastructure to a production environment. Production deployments carry high blast radius — an unauthorized or insufficiently-reviewed change can cause outages, data corruption, or security exposure across all customers. Every deploy must be traceable to a tamper-evident permit with an auditable approval chain.",
+    "display_name": "Execute Authorized Change or Deployment Plan",
+    "description": "Authorization gate for executing an authorized change or deployment plan against a target system. This spans deploying code, configuration, or infrastructure to a production environment AND applying an authorized change plan to an enterprise business system — for example a CI/CD deployment, or a configuration / permission / workflow / financial-control change plan applied to a system such as a CRM or ERP. These executions carry high blast radius: an unauthorized or insufficiently-reviewed change can cause outages, data corruption, or security/compliance exposure. Every execution must be traceable to a tamper-evident permit bound to the exact canonical plan, with an auditable approval chain.",
     "family": "production.deploy",
     "risk_posture": "high",
     "ai_risk": "High",
@@ -83,7 +83,7 @@ export const CANON_ACT_CATALOG: ActSpecEntry[] = [
       "minimum_pattern": "EP-02",
       "approval_artifact_required": true,
       "state_snapshot_required": true,
-      "notes": "State snapshot captures the git SHA, image digest, or Terraform plan hash at authorization time, binding the permit to the exact artifact deployed.\n"
+      "notes": "State snapshot captures a canonical plan digest — a git SHA, image digest, Terraform plan hash, or the digest of a business-system change plan (e.g. a Salesforce change set or NetSuite SDF project) — at authorization time, binding the permit to the exact plan executed.\n"
     },
     "use_case": "Gate every production deployment behind a tamper-evident permit with named approvers, change window enforcement, and an offline-verifiable audit chain — so auditors can prove who authorized what, when, and with what evidence.",
     "industries": [
@@ -1945,7 +1945,7 @@ export const CANON_ACT_CATALOG: ActSpecEntry[] = [
     "canon_id": "CANON-000033",
     "slug": "infrastructure.change",
     "display_name": "Infrastructure Change",
-    "description": "Authorization gate for changing production infrastructure or its configuration — applying Terraform/Helm, altering gateway routing, and changing network controls (WAF rules, security groups, ingress, DNS, load balancers). Infrastructure changes carry broad blast radius: a routing or firewall change can expose or sever production traffic across all services. Human approval plus a state snapshot binding the planned change (plan hash) gate the action to a reviewed, identified change. Production network-control changes are governed under this action.",
+    "description": "Authorization gate for changing production infrastructure or its configuration — applying Terraform/Helm, altering gateway routing, changing network controls (WAF rules, security groups, ingress, DNS, load balancers), and changing monitoring/alerting configuration (alert routing and thresholds, silences/mutes, health checks, on-call escalation policies, dashboards and retention windows that feed incident response). Infrastructure changes carry broad blast radius: a routing or firewall change can expose or sever production traffic across all services, and a monitoring-configuration change can blind the organization to the consequences of that same failure. Human approval plus a state snapshot binding the planned change (plan hash) gate the action to a reviewed, identified change. Production network-control and monitoring-configuration changes are governed under this action as scenarios of infrastructure change, not as separate actions.\nMonitoring-configuration scope (governed scenario, not a separate action): a change that SUPPRESSES, DISABLES, or MATERIALLY WEAKENS a monitoring or alerting capability — muting or snoozing an alert, raising an alert threshold, disabling a health check, removing a service from a paging rotation or dashboard, or shortening a retention window that would hide the change later — is a \"cover your tracks\" risk pattern: it reduces the organization's ability to detect the consequences of the very change (or a related change) it accompanies. This scenario ALWAYS requires human approval, REGARDLESS of whether the organization has otherwise configured infrastructure.change to allow change-window-based or other lower-friction handling for routine infrastructure changes. No org-level relaxation of this action's friction may ever exempt a monitoring-weakening change, even one that would otherwise qualify as \"routine\" and route through a low-friction path. See the header comment above for the CAR schema's per-scenario-override limitation this note works around, and `policy_template.controls[human_approval].description` below for the same requirement stated as a control-level note.",
     "family": "infrastructure.change",
     "risk_posture": "high",
     "ai_risk": "High",
@@ -1981,6 +1981,13 @@ export const CANON_ACT_CATALOG: ActSpecEntry[] = [
         "mapping": "Changes to firewalls, security groups, and ingress are network-security-control changes. The permit provides the authorized, documented record PCI DSS requires for network-control modifications.\n",
         "evidence_source": "audit_chain",
         "status_query": "network_control_change_permit_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 SI-4 — System Monitoring",
+        "mapping": "A change that suppresses, disables, or materially weakens monitoring or alerting is itself a controlled event under this action, and is always human-approved — the permit is evidence that a reduction in detection capability was reviewed rather than made unilaterally at execution time.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "monitoring_config_change_approval_pct"
       }
     ],
     "evidence_requirements": {
@@ -2046,7 +2053,7 @@ export const CANON_ACT_CATALOG: ActSpecEntry[] = [
     "canon_id": "CANON-000035",
     "slug": "secret.rotate",
     "display_name": "Secret Rotation",
-    "description": "Authorization gate for rotating a production credential or signing key — API keys, database passwords, service tokens, or signing material. Rotation is a privileged operation: a botched or malicious rotation can cause a widespread outage (every consumer of the old secret breaks) or, worse, hand an attacker fresh valid credentials. State snapshot binding captures the secret identity and key version so the permit records exactly which secret was rotated to which version.",
+    "description": "Authorization gate for rotating a production credential or signing key — API keys, database passwords, service tokens, or signing material. Rotation is a privileged operation: a botched or malicious rotation can cause a widespread outage (every consumer of the old secret breaks) or, worse, hand an attacker fresh valid credentials. State snapshot binding captures the secret identity and key version so the permit records exactly which secret was rotated to which version.\nSCOPE (2026-08-25): this action governs rotating a secret's VALUE only — producing a new credential/key version for an existing secret. It does NOT cover changing a secret's ACCESS-CONTROL or GOVERNANCE configuration (who or what may read it, where it is stored, its rotation policy or schedule) — that is a materially broader, higher-authority access-control decision governed by secret.configuration.change (CANON-000054, ACT-0057), which requires human approval and a verified, MFA'd approver. A caller widening who can read a secret, or relocating/reconfiguring its storage or rotation policy, must call secret.configuration.change, not this action. trust_root.publish (CANON-000035; SPECIALIZATIONS.yaml) remains a value-rotation-shaped specialization of THIS action; secret.configuration.change is a distinct standalone canonical action, not a specialization of secret.rotate.",
     "family": "privileged.operation",
     "risk_posture": "high",
     "ai_risk": "High",
@@ -2762,6 +2769,473 @@ export const CANON_ACT_CATALOG: ActSpecEntry[] = [
       "genomics",
       "cro",
       "biobank"
+    ]
+  },
+  {
+    "id": "ACT-0050",
+    "canon_id": "CANON-000047",
+    "slug": "communication.external.send",
+    "display_name": "External Communication Send",
+    "description": "Authorization gate for sending a communication (email or equivalent message) to a recipient outside the organization's boundary — the same \"release data beyond its original boundary\" consequence as a bulk export, at the scale of a single message. An outbound email carrying sensitive or customer information to a new external recipient is functionally a data-egress event: once sent, it cannot be recalled. The permit is bound to the exact recipient and attachment content authorized; any change to either after approval invalidates it. Applies identically whether the send is composed by a person, a workflow, a script, or an AI agent — none of them gain independent authority to release data externally merely by holding a connector credential to the mail platform.",
+    "family": "data.release",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false,
+      "minimum_approvals": 1
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "gdpr",
+        "clause": "GDPR Art. 5(1)(f) — Integrity and Confidentiality / Art. 44 — Transfers",
+        "mapping": "AtlaSent binds each authorized external send to the exact recipient and content approved, giving a tamper-evident accountability record for personal-data disclosures leaving the organization by communication channel, not just by bulk export.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "external_send_human_approval_pct"
+      },
+      {
+        "framework": "soc2",
+        "clause": "SOC 2 CC6.7 — Data Transmission and Disposal Controls",
+        "mapping": "Every consequential outbound communication carries a signed permit proving the send was authorized, to whom, and with what content, before the mail platform transmits it.\n",
+        "evidence_source": "permit_record",
+        "status_query": "external_send_permit_coverage"
+      },
+      {
+        "framework": "hipaa",
+        "clause": "HIPAA Security Rule §164.312(e) — Transmission Security",
+        "mapping": "Outbound communications carrying PHI to an external recipient are gated on human approval and an exact-binding permit before transmission, with the approval and content scope recorded in the immutable audit chain.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "phi_external_send_gate_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "notes": "The permit binds recipient, resource (message/attachment reference), and content-hash scope, so the audit record proves exactly what was authorized to be sent to whom. A recipient or attachment substitution after approval is a binding mutation, refused at verification time by the same generic exact-binding mechanism proven for access.grant/access.revoke (atlasent-api v1-evaluate / v1-verify-permit) — not a new primitive.\n"
+    },
+    "use_case": "Gate outbound communications carrying sensitive or customer information to new external recipients behind human approval and an exact recipient/content-bound permit — so a data leak, an AI agent auto-sending to the wrong address, or a customer-data disclosure with no authorization record becomes structurally impossible rather than a policy hope.",
+    "industries": [
+      "fintech",
+      "healthtech",
+      "saas",
+      "enterprise",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0051",
+    "canon_id": "CANON-000048",
+    "slug": "trial.randomization.break",
+    "display_name": "Trial Randomization Code Break",
+    "description": "Authorization gate for breaking a clinical trial's randomization code for a single subject — revealing that one subject's treatment assignment (distinct from trial.unblinding.execute, CANON-000018, which reveals assignments trial-wide). A code break is typically triggered by a safety event and must be attributable to a named, verified approver, bound to the trial and subject, with an explicit reason. Mints this record from the shape already enforced in production by the authoritative life-sciences seeder (seed_life_sciences_action_classes) since 2026-07-09 — this CAR documents deployed behavior, it does not change it.",
+    "family": "clinical.trial",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": true,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "human-only",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "ich_e6_gcp",
+        "clause": "ICH E6(R2) §4.8 — Breaking the Blind (subject-level)",
+        "mapping": "A single-subject code break, triggered by a safety event, is captured as a verified human approval artifact bound to the trial and subject, with an explicit reason for the break.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "gxp_randomization_break_approval_pct"
+      },
+      {
+        "framework": "cfr_part_11",
+        "clause": "21 CFR Part 11 §11.300 — Controls for Identification Codes",
+        "mapping": "Multi-factor authentication is enforced via requires_mfa on every code-break request, evidencing that only an authenticated, trained individual triggered it.\n",
+        "evidence_source": "evaluation_record",
+        "status_query": "gxp_randomization_break_mfa_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "notes": "The bundle requires trial_id, subject_id, and reason to be present; an unattributed or reasonless break falls through to a hold for manual review rather than a bare deny, matching the seeder's fallback template.\n"
+    },
+    "use_case": "Gate subject-level randomization code breaks behind a verified human approval and MFA, so a sponsor or CRO can prove every emergency code break was authorized by a named, authenticated investigator with a documented safety rationale.",
+    "industries": [
+      "pharma",
+      "biotech",
+      "cro"
+    ]
+  },
+  {
+    "id": "ACT-0052",
+    "canon_id": "CANON-000049",
+    "slug": "reconciliation.certify",
+    "display_name": "Reconciliation — Certify",
+    "description": "Authorization gate for certifying a period-end account reconciliation as complete and accurate — the officer certification step underlying SOX §302/§404. Allow requires the reviewer to have attested; runtime enforcement also requires a cryptographically resolvable, verified actor identity AND an issuer-scoped independent approver (the certifying approver cannot be the same identity as the requester) — a separation-of-duties gate added 2026-07-26 (migration 20260733000000) that the CAR schema does not yet have a field for (see the note above). Mints this record from the shape already enforced in production by the authoritative financial-services seeder (seed_financial_services_action_classes) since 2026-07-10 — this CAR documents deployed behavior, it does not change it.",
+    "family": "finance.controllership",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": true,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "four-eyes",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "sox",
+        "clause": "SOX §302 / §404 — Officer Certification of Internal Controls",
+        "mapping": "A period-end reconciliation certification is captured as a verified human approval artifact from an issuer-scoped identity distinct from the requester — the certifying-officer independence §302/§404 assumes.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "sox_reconciliation_certify_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+        "mapping": "requires_independent_approval enforces that the certifier is not the requester at the runtime layer, ahead of the AC-5 requirement this control maps to.\n",
+        "evidence_source": "permit_record",
+        "status_query": "sox_reconciliation_sod_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+        "mapping": "Conflicting duties over a financial-close attestation are separated by the issuer-scoped independent-approval check.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "sox_reconciliation_segregation_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "notes": "The bundle requires reviewer_attested=true; the independent-approval gate is enforced at the action_classes layer, not the bundle rule, and is not yet represented in this record's gate_flags (see the file-header note).\n"
+    },
+    "use_case": "Gate every period-end reconciliation certification behind a verified, independent human approval and MFA, so a controller can prove the officer certification SOX §302/§404 requires actually happened, with a self-approval-proof, offline-verifiable record.",
+    "industries": [
+      "fintech",
+      "enterprise",
+      "saas",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0053",
+    "canon_id": "CANON-000050",
+    "slug": "journal_entry.approve",
+    "display_name": "Journal Entry — Approve",
+    "description": "Authorization gate for approving a manual journal entry above threshold — the decision that authorizes the entry for posting, distinct from journal.post (CANON-000041), which commits an already-approved entry to the ledger. Allow requires both journal_entry_id and approver_id to be present; runtime enforcement also requires a cryptographically resolvable, verified actor identity AND an issuer-scoped independent approver distinct from the preparer — the same segregation-of-duties gate as reconciliation.certify (ACT-0052), added 2026-07-26 (migration 20260733000000). Mints this record from the shape already enforced in production by the authoritative financial-services seeder (seed_financial_services_action_classes) since 2026-07-10 — this CAR documents deployed behavior, it does not change it.",
+    "family": "finance.controllership",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": true,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "four-eyes",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "sox",
+        "clause": "SOX ITGC — Manual Journal Entry Segregation of Duties",
+        "mapping": "A manual journal-entry approval is captured as a verified human approval artifact from an issuer-scoped identity distinct from the preparer — the preparer/approver segregation SOX ITGC controls require.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "sox_journal_entry_approve_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+        "mapping": "requires_independent_approval enforces that the approver is not the preparer at the runtime layer, ahead of the AC-5 requirement this control maps to.\n",
+        "evidence_source": "permit_record",
+        "status_query": "sox_journal_entry_sod_pct"
+      },
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+        "mapping": "Conflicting duties over a manual journal-entry approval are separated by the issuer-scoped independent-approval check.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "sox_journal_entry_segregation_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-02",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "notes": "The bundle requires journal_entry_id and approver_id to be present (else deny, not hold — a missing identifier is a malformed request, not one awaiting review). The independent-approval gate is enforced at the action_classes layer, not the bundle rule, and is not yet represented in this record's gate_flags (see the file-header note).\n"
+    },
+    "use_case": "Gate every manual journal-entry approval behind a verified, independent human approval and MFA, so a controller can prove the preparer/approver segregation SOX ITGC requires actually happened, before the entry ever reaches journal.post.",
+    "industries": [
+      "fintech",
+      "enterprise",
+      "saas",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0054",
+    "canon_id": "CANON-000051",
+    "slug": "variance_review.escalate",
+    "display_name": "Variance Review — Escalate",
+    "description": "Authorization gate for escalating a budget/close variance review to a named reviewer — a lower-stakes review-routing action, not a dual-control certification like reconciliation.certify (CANON-000049) or journal_entry.approve (CANON-000050). Allow requires both variance_id and reason to be present; the runtime does not require MFA, a verified actor identity, or an independent approver for this class — a deliberately lighter gate than its two SOX-certification siblings, matching its lower blast radius. Mints this record from the shape already enforced in production by the authoritative financial-services seeder (seed_financial_services_action_classes) since 2026-07-10 — this CAR documents deployed behavior, it does not change it.",
+    "family": "finance.controllership",
+    "risk_posture": "standard",
+    "ai_risk": "Medium",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": false,
+      "requires_verified_actor": false,
+      "requires_state_snapshot": false,
+      "required_assertion_classes": []
+    },
+    "authorization_pattern": {
+      "type": "human-only",
+      "machine_executable": false
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "sox",
+        "clause": "SOX §404 — Management Assessment of Internal Controls (close review)",
+        "mapping": "A variance review escalation is captured as a verified human approval artifact bound to the variance and stated reason — a lower-stakes review-routing control that supports the broader close-review program §404 expects, without the dual-control weight of a certification action.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "sox_variance_review_escalate_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-01",
+      "approval_artifact_required": true,
+      "state_snapshot_required": false,
+      "notes": "The bundle requires variance_id and reason to be present; an unattributed or reasonless escalation falls through to a hold for manual review rather than a bare deny, matching the seeder's fallback template.\n"
+    },
+    "use_case": "Gate variance-review escalations behind a verified human approval, so a controller can trace every escalated variance to a named reviewer and reason, without the dual-control overhead of a full certification action.",
+    "industries": [
+      "fintech",
+      "enterprise",
+      "saas",
+      "regulated-industries"
+    ]
+  },
+  {
+    "id": "ACT-0055",
+    "canon_id": "CANON-000052",
+    "slug": "industrial.safety.bypass",
+    "display_name": "Safety Instrumented System Bypass",
+    "description": "Authorization gate for bypassing or inhibiting a safety instrumented function (SIF) — a pressure trip, an emergency shutdown interlock, a fire & gas detection loop — to permit maintenance, testing, or a degraded operating mode. This is distinct from control.override (generic security-control bypass): a SIS bypass disables a layer of protection against a physical hazard (overpressure, fire, toxic release), not a security or compliance control, and carries its own regulatory regime (IEC 61511 bypass/inhibit management, OSHA PSM 1910.119(l) Management of Change, API RP 754). The permit binds the bypassed function tag, the mandatory compensating measure, and a hard expiry — the bypass must auto-revert; there is no open-ended bypass. Verification proves the function was RESTORED, not merely that it was disabled.",
+    "family": "industrial.safety",
+    "risk_posture": "critical",
+    "ai_risk": "Extreme",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": true,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": [
+        "approval",
+        "identity",
+        "risk"
+      ]
+    },
+    "authorization_pattern": {
+      "type": "human-only",
+      "machine_executable": false,
+      "minimum_approvals": 2
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "iec_61511",
+        "clause": "IEC 61511-1 Cl. 16.2.3 / 11.2.11 — Bypass and Override Management",
+        "mapping": "Every SIS bypass captures a tamper-evident permit binding the safety function tag, the compensating measure in place, the process safety authority who authorized it, and the permit's hard expiry — the change-authorization and impairment-tracking evidence IEC 61511 requires for a safety instrumented function taken out of service.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "sis_bypass_change_auth_pct"
+      },
+      {
+        "framework": "osha_psm",
+        "clause": "29 CFR 1910.119(l) — Management of Change",
+        "mapping": "A bypass of a safety-critical control is a temporary change to the process safety basis; the permit captures the MOC-equivalent evidence (verified authorizer, technical basis for the compensating measure, time-bound duration) at the moment of bypass.\n",
+        "evidence_source": "permit_record",
+        "status_query": "sis_bypass_moc_evidence_pct"
+      },
+      {
+        "framework": "api_rp_754",
+        "clause": "API RP 754 — Process Safety Performance Indicators (Tier 1/2 near-miss basis)",
+        "mapping": "Bypass duration and restoration confirmation are captured so an unrestored or overdue-expiry bypass is machine-detectable as a process-safety impairment, not discovered retroactively during an audit.\n",
+        "evidence_source": "evaluation_record",
+        "status_query": "sis_bypass_restoration_confirmed_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-05",
+      "approval_artifact_required": true,
+      "state_snapshot_required": true,
+      "required_assertions": [
+        "approval",
+        "identity",
+        "risk"
+      ],
+      "notes": "The state_snapshot binds the safety function tag, the compensating measure, and the bypass duration at authorization time. A second evaluation at restoration time closes the loop — evidence is reconcilable against the DCS/SIS event log to detect an overdue or silently-extended bypass.\n"
+    },
+    "use_case": "Gate every safety instrumented system bypass behind process-safety-authority approval, a documented compensating measure, and a hard, permit-bound expiry — so a plant can prove every protective-function bypass was authorized, time-bound, and restored, not left open and discovered during the next incident investigation or IEC 61511 audit.",
+    "industries": [
+      "energy",
+      "oil-and-gas",
+      "chemicals",
+      "utilities",
+      "manufacturing"
+    ]
+  },
+  {
+    "id": "ACT-0056",
+    "canon_id": "CANON-000053",
+    "slug": "industrial.controller.configure",
+    "display_name": "Industrial Controller Configuration Change",
+    "description": "Authorization gate for downloading new control logic, program, or firmware to a physical-process controller — a PLC ladder-logic or function-block program, an RTU/IED configuration, or a DCS controller firmware image. This changes what the controller DOES the next time it runs, not a single command (industrial.control.actuate) and not IT/cloud infrastructure (infrastructure.change): it is a configuration-management event against a safety- and reliability-relevant device, gated at the engineering workstation before the download reaches the field controller. Release requires an isolated engineering workstation, offline test/simulation evidence, and a verified configuration-management sign-off; the resulting running configuration is snapshotted so a later evaluate can detect configuration drift against the approved version. Regulatory basis: IEC 62443-3-3 SR 3.4 / SR 7.6, NERC CIP-010-4.",
+    "family": "industrial.control",
+    "risk_posture": "critical",
+    "ai_risk": "Extreme",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": true,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": [
+        "approval",
+        "identity",
+        "supply_chain"
+      ]
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false,
+      "minimum_approvals": 2
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "iec_62443",
+        "clause": "IEC 62443-3-3 SR 3.4 — Software and Information Integrity",
+        "mapping": "The permit binds a content hash of the downloaded logic/firmware image, so the evaluation record and audit chain prove exactly what configuration was authorized and deployed to the controller — the integrity evidence SR 3.4 requires.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "ot_controller_config_integrity_pct"
+      },
+      {
+        "framework": "iec_62443",
+        "clause": "IEC 62443-3-3 SR 7.6 — Network and Security Configuration Settings",
+        "mapping": "Every configuration change to a controller is authorized before download, with a verified engineer and a captured pre/post configuration snapshot — the configuration change-management evidence SR 7.6 requires.\n",
+        "evidence_source": "permit_record",
+        "status_query": "ot_controller_config_change_auth_pct"
+      },
+      {
+        "framework": "nerc_cip",
+        "clause": "NERC CIP-010-4 — Configuration Change Management and Vulnerability Assessments",
+        "mapping": "The permit captures the device tag, the old->new configuration hash, and the authorizing engineer for every BES cyber system controller configuration change, satisfying CIP-010's baseline configuration and change-authorization evidence.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "ot_controller_config_cip010_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-05",
+      "approval_artifact_required": true,
+      "state_snapshot_required": true,
+      "required_assertions": [
+        "approval",
+        "identity",
+        "supply_chain"
+      ],
+      "notes": "The state_snapshot binds the device tag and the content hash of the old and new configuration/firmware image. The supply_chain assertion attests the image's origin (build/engineering-workstation provenance) before it is authorized for download. Evidence is reconcilable against the controller's running-configuration hash to detect drift between the authorized and deployed version.\n"
+    },
+    "use_case": "Gate every control-logic and firmware download to a PLC, RTU, or DCS controller behind independent engineering review, MFA, a verified engineer, and a permit bound to the exact configuration content hash — so a plant or utility can prove every controller change was reviewed, tested offline, and matches what was actually deployed, closing the gap where an unauthorized or untested logic change reaches a safety- or reliability-relevant device.",
+    "industries": [
+      "energy",
+      "utilities",
+      "oil-and-gas",
+      "manufacturing",
+      "water"
+    ]
+  },
+  {
+    "id": "ACT-0057",
+    "canon_id": "CANON-000054",
+    "slug": "secret.configuration.change",
+    "display_name": "Secret Configuration Change",
+    "description": "Authorization gate for changing a secret's ACCESS-CONTROL or GOVERNANCE configuration — granting or narrowing WHO or WHAT may read a secret (an IAM policy, KMS key policy, or Vault/Secrets Manager access policy attached to it), moving or re-provisioning WHERE it is stored, or changing its rotation policy or schedule. This is distinct from secret.rotate (CANON-000035, ACT-0038), which governs rotating the secret's VALUE — a role-only, non- approved, machine-executable operation. Configuration changes are broader and higher-authority: widening who can read a live credential is a privilege-escalation-shaped decision (the same risk identity.privileged.grant governs for general entitlements), and relocating or degrading a secret's storage or rotation posture can silently weaken every control that depends on that secret staying rotated and access-scoped. Human approval, a verified and MFA'd approver, and a state snapshot binding the before/after configuration gate this action to a reviewed, identified change. secret.rotate's own scope is limited to VALUE rotation; see that CAR's description for the cross-reference this change adds.",
+    "family": "infrastructure.change",
+    "risk_posture": "high",
+    "ai_risk": "High",
+    "gate_flags": {
+      "requires_human_approval": true,
+      "requires_mfa": true,
+      "requires_verified_actor": true,
+      "requires_state_snapshot": true,
+      "required_assertion_classes": [
+        "identity",
+        "approval"
+      ]
+    },
+    "authorization_pattern": {
+      "type": "approval-chain",
+      "machine_executable": false,
+      "minimum_approvals": 1
+    },
+    "regulatory_mappings": [
+      {
+        "framework": "iso27001",
+        "clause": "ISO/IEC 27001:2022 A.8.2 — Privileged Access Rights",
+        "mapping": "Widening who may read a live secret is a privileged-access-rights change; AtlaSent records the approver's verified identity, MFA, and the before/after access-control configuration for every such change.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "secret_config_privileged_access_pct"
+      },
+      {
+        "framework": "nist_800_53",
+        "clause": "NIST SP 800-53 Rev.5 AC-6 — Least Privilege",
+        "mapping": "A secret's access-control configuration is a least-privilege boundary; the permit captures the approved actor, the verified approver, and the resulting access-control state, evidencing AC-6 control over who may reach a stored credential.\n",
+        "evidence_source": "permit_record",
+        "status_query": "ac6_secret_config_change_pct"
+      },
+      {
+        "framework": "pci_dss",
+        "clause": "PCI DSS v4.0 Req. 7 — Restrict Access to System Components by Business Need to Know",
+        "mapping": "Changing who can access a secret (including secrets protecting cardholder-data systems) is a need-to-know access-control event. AtlaSent provides the authorized, documented, MFA'd approval record PCI DSS requires before that access-control boundary is widened.\n",
+        "evidence_source": "audit_chain",
+        "status_query": "pci_secret_config_change_pct"
+      }
+    ],
+    "evidence_requirements": {
+      "minimum_pattern": "EP-04",
+      "approval_artifact_required": true,
+      "state_snapshot_required": true,
+      "required_assertions": [
+        "identity",
+        "approval"
+      ],
+      "notes": "The state snapshot should capture the secret identity (name/ARN, never the value) and the before/after access-control policy, storage location, or rotation-policy configuration — whichever changed. Approval artifact records the verified approver.\n"
+    },
+    "use_case": "Gate every change to a production secret's access-control, storage, or rotation-policy configuration behind human approval, a verified MFA'd approver, and a before/after configuration snapshot — distinct from, and stricter than, the machine-executable gate for rotating the secret's value, so widening who can reach a live credential is never a same-privilege, unapproved event.",
+    "industries": [
+      "fintech",
+      "saas",
+      "healthtech",
+      "enterprise",
+      "regulated-industries"
     ]
   }
 ];
