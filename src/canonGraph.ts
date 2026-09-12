@@ -792,6 +792,7 @@ export const CANON_ACTION_GRAPH: Record<string, CanonNeighborhood> = {
     "controls": [
       "ISO/IEC 27001:2022 A.8.32 — Change Management",
       "NIST SP 800-53 Rev.5 CM-3 — Configuration Change Control",
+      "NIST SP 800-53 Rev.5 SI-4 — System Monitoring",
       "PCI DSS v4.0 Req. 1 — Install and Maintain Network Security Controls"
     ],
     "domain": "infrastructure",
@@ -1099,6 +1100,200 @@ export const CANON_ACTION_GRAPH: Record<string, CanonNeighborhood> = {
       "ISO/IEC 27001:2022 A.5.34 — Privacy & PII / A.8.15 — Logging"
     ],
     "domain": "data",
+    "pattern": "approval-chain"
+  },
+  "communication.external.send": {
+    "requires": [
+      "approval"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "gdpr",
+      "hipaa",
+      "soc2"
+    ],
+    "controls": [
+      "GDPR Art. 5(1)(f) — Integrity and Confidentiality / Art. 44 — Transfers",
+      "HIPAA Security Rule §164.312(e) — Transmission Security",
+      "SOC 2 CC6.7 — Data Transmission and Disposal Controls"
+    ],
+    "domain": "data",
+    "pattern": "approval-chain"
+  },
+  "trial.randomization.break": {
+    "requires": [
+      "approval",
+      "mfa"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "cfr_part_11",
+      "ich_e6_gcp"
+    ],
+    "controls": [
+      "21 CFR Part 11 §11.300 — Controls for Identification Codes",
+      "ICH E6(R2) §4.8 — Breaking the Blind (subject-level)"
+    ],
+    "domain": "clinical",
+    "pattern": "human-only"
+  },
+  "reconciliation.certify": {
+    "requires": [
+      "approval",
+      "mfa",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "sox"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+      "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+      "SOX §302 / §404 — Officer Certification of Internal Controls"
+    ],
+    "domain": "finance",
+    "pattern": "four-eyes"
+  },
+  "journal_entry.approve": {
+    "requires": [
+      "approval",
+      "mfa",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "sox"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.5.3 — Segregation of duties",
+      "NIST SP 800-53 Rev.5 AC-5 — Separation of Duties",
+      "SOX ITGC — Manual Journal Entry Segregation of Duties"
+    ],
+    "domain": "finance",
+    "pattern": "four-eyes"
+  },
+  "variance_review.escalate": {
+    "requires": [
+      "approval"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [],
+    "frameworks": [
+      "sox"
+    ],
+    "controls": [
+      "SOX §404 — Management Assessment of Internal Controls"
+    ],
+    "domain": "finance",
+    "pattern": "human-only"
+  },
+  "industrial.safety.bypass": {
+    "requires": [
+      "approval",
+      "mfa",
+      "state-snapshot",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [
+      "approval",
+      "identity",
+      "risk"
+    ],
+    "frameworks": [
+      "api_rp_754",
+      "iec_61511",
+      "osha_psm"
+    ],
+    "controls": [
+      "29 CFR 1910.119(l) — Management of Change",
+      "API RP 754 — Process Safety Performance Indicators (Tier 1/2 near-miss basis)",
+      "IEC 61511-1 Cl. 16.2.3 / 11.2.11 — Bypass and Override Management"
+    ],
+    "domain": "industrial",
+    "pattern": "human-only"
+  },
+  "industrial.controller.configure": {
+    "requires": [
+      "approval",
+      "mfa",
+      "state-snapshot",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [
+      "approval",
+      "identity",
+      "supply_chain"
+    ],
+    "frameworks": [
+      "iec_62443",
+      "nerc_cip"
+    ],
+    "controls": [
+      "IEC 62443-3-3 SR 3.4 — Software and Information Integrity",
+      "IEC 62443-3-3 SR 7.6 — Network and Security Configuration Settings",
+      "NERC CIP-010-4 — Configuration Change Management and Vulnerability Assessments"
+    ],
+    "domain": "industrial",
+    "pattern": "approval-chain"
+  },
+  "secret.configuration.change": {
+    "requires": [
+      "approval",
+      "mfa",
+      "state-snapshot",
+      "verified-actor"
+    ],
+    "produces": [
+      "audit-chain",
+      "permit"
+    ],
+    "assertions": [
+      "approval",
+      "identity"
+    ],
+    "frameworks": [
+      "iso27001",
+      "nist_800_53",
+      "pci_dss"
+    ],
+    "controls": [
+      "ISO/IEC 27001:2022 A.8.2 — Privileged Access Rights",
+      "NIST SP 800-53 Rev.5 AC-6 — Least Privilege",
+      "PCI DSS v4.0 Req. 7 — Restrict Access to System Components"
+    ],
+    "domain": "infrastructure",
     "pattern": "approval-chain"
   }
 };
