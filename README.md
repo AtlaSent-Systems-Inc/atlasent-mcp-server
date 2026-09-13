@@ -196,6 +196,23 @@ Hosted V1 API-facing tools. Use the richer remote evaluation path when you need 
 
 Read-only Canon lookup for Action Types, gate flags, authorization patterns, evidence requirements, and graph relationships.
 
+```text
+Input:  { slug? }    // exact Canon slug, e.g. "production.deploy"
+        { query? }   // plain language, e.g. "deploy the api service to prod"
+        {}           // list the full Canon
+Output: { found, result_count, actions[], retrieval? }
+```
+
+`query` is resolved by a deterministic, fully offline ranker over the vendored Canon (no embeddings service, no network — `src/actionRetrieval.ts`). The response carries a `retrieval` block:
+
+| `retrieval.confidence` | Meaning |
+|---|---|
+| `confident` | One Canon entry clearly matches. `actions[0]` is it. Safe to act on. |
+| `ambiguous` | Two or more entries are close, or the request only partly matched. Read `retrieval.candidates` and pick, or rephrase. |
+| `none` | The Canon has no action matching this description. `found` is `false`, `actions` is empty, and `hint` points at the Canon intake pipeline. |
+
+The tool never invents an action type: every candidate is a Canon entry by reference, and a request the Canon cannot answer comes back as `none` rather than a plausible-looking slug. Context words such as *emergency*, *weekend*, or *urgent* are treated as policy context, not as evidence of a different action — "emergency deploy to production" still resolves to `production.deploy`, per `LIFECYCLE.md`'s classification principle.
+
 ### `atlasent_atlas_lookup`
 
 Read-only lookup of canonical AtlaSent concepts such as Authority, Policy, Decision, Permit, Verification, Evidence, Gate, and Trust Root.

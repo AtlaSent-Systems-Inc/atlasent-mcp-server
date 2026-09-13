@@ -40,8 +40,9 @@ import {
 import { registerV2Tools } from "./v2Tools.js";
 import { registerComplianceTools } from "./complianceTools.js";
 import { registerVqpTools } from "./vqpTools.js";
-import { CANON_ACT_CATALOG } from "./canonCatalog.js";
+import { CANON_ACT_CATALOG, type ActSpecEntry } from "./canonCatalog.js";
 import { CANON_ACTION_GRAPH } from "./canonGraph.js";
+import { NO_MATCH_HINT, rankActions, type RetrievalResult } from "./actionRetrieval.js";
 import { ATLAS_CONCEPTS, ATLAS_NODES, ATLAS_SOURCE } from "./atlasCatalog.js";
 
 export const VERSION = "2.11.0";
@@ -111,6 +112,7 @@ const LOG_SAFE_TOP_LEVEL_KEYS = new Set([
   "audit_id",      // correlation only, no user material
   "permit_token",  // already opaque
   "duration_ms",
+  "retrieval_confidence", // closed enum: confident / ambiguous / none — no user material
 ]);
 
 function _hashShort(s: string): string {
@@ -1701,8 +1703,12 @@ export function createServer(): McpServer {
         "authorization pattern, risk posture, AI risk classification, regulatory mappings, evidence requirements, and the action's " +
         "knowledge-graph relationships (what it requires and produces, and which frameworks / control objectives it satisfies) " +
         "for every governed action type in the Canon. " +
-        "Use `slug` for an exact match (e.g. 'production.deploy') or `query` for a substring search " +
-        "across slug, display_name, and description. Omit both to list the full Canon.",
+        "Use `slug` for an exact match (e.g. 'production.deploy') or `query` to describe what you want to do in " +
+        "plain language (e.g. 'deploy the api service to prod', 'grant admin access', 'close the books'). " +
+        "`query` is ranked offline against the vendored Canon and returns a `retrieval` block with " +
+        "`confidence` = confident | ambiguous | none — act only on `confident`; the tool never invents an " +
+        "action type, and a `none` result means the Canon has no such action (see the hint). " +
+        "Omit both to list the full Canon.",
       inputSchema: z.object({
         slug: z
           .string()
@@ -1713,7 +1719,10 @@ export function createServer(): McpServer {
           .string()
           .max(MAX_FIELD_LEN)
           .optional()
-          .describe("Substring search across slug, display_name, and description. Case-insensitive."),
+          .describe(
+            "Plain-language description of the action to find. Ranked deterministically (offline, no network) " +
+              "over slug, display name, family, description and a curated alias vocabulary.",
+          ),
       }),
       annotations: {
         readOnlyHint: true,
@@ -1730,24 +1739,32 @@ export function createServer(): McpServer {
       }
 
       let results = CANON_ACT_CATALOG;
+      let retrieval: RetrievalResult | undefined;
 
       if (args.slug !== undefined && args.slug !== "") {
         const target = args.slug.toLowerCase();
         results = CANON_ACT_CATALOG.filter((a) => a.slug === target);
-      } else if (args.query !== undefined && args.query !== "") {
-        const q = args.query.toLowerCase();
-        results = CANON_ACT_CATALOG.filter(
-          (a) =>
-            a.slug.includes(q) ||
-            a.display_name.toLowerCase().includes(q) ||
-            a.description.toLowerCase().includes(q),
-        );
+      } else if (args.query !== undefined && args.query.trim() !== "") {
+        // Natural-language path: deterministic offline ranking over the
+        // vendored Canon (actionRetrieval.ts). Every candidate is a Canon
+        // entry by reference — nothing here can synthesize a slug. A "none"
+        // verdict returns found:false with an intake-pipeline hint rather
+        // than a plausible-looking guess.
+        retrieval = rankActions(args.query);
+        const bySlug = new Map(CANON_ACT_CATALOG.map((a) => [a.slug, a] as const));
+        results =
+          retrieval.confidence === "none"
+            ? []
+            : retrieval.candidates
+                .map((c) => bySlug.get(c.slug))
+                .filter((a): a is ActSpecEntry => a !== undefined);
       }
 
       log("atlasent_lookup_action", {
         slug: args.slug,
         query: args.query,
         result_count: results.length,
+        retrieval_confidence: retrieval?.confidence,
       });
 
       if (results.length === 0) {
@@ -1755,7 +1772,10 @@ export function createServer(): McpServer {
           found: false,
           result_count: 0,
           actions: [],
-          hint: "No matching canonical action found. Use query='' or omit all parameters to list the full Canon.",
+          ...(retrieval ? { retrieval } : {}),
+          hint: retrieval
+            ? NO_MATCH_HINT
+            : "No matching canonical action found. Use query='' or omit all parameters to list the full Canon.",
         } as unknown as Record<string, unknown>);
       }
 
@@ -1771,6 +1791,7 @@ export function createServer(): McpServer {
         found: true,
         result_count: enriched.length,
         actions: enriched,
+        ...(retrieval ? { retrieval } : {}),
       } as unknown as Record<string, unknown>);
     },
   );
