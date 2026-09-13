@@ -137,6 +137,43 @@ will quietly discard is strictly worse than refusing at the client boundary.
 `atlasent-llm-integrations` carried the mirror-image form of this defect (it
 bound at evaluate, in `context`, prefixed) and was fixed the same day.
 
+### Target binding — the same hole, one field over
+
+`target_id` presented at verify does nothing on its own, for exactly the reason
+the payload digest did nothing: `v1-verify-permit` compares it against a value
+it reads back from the EVALUATE call, and its guard is
+present-and-bound-and-differ ("an omitted or unbound target never denies").
+With nothing bound at evaluate the comparison is skipped and a permit minted
+for target A redeems while presenting target B.
+
+Three consumers read the bound side, so `applyTargetBinding` populates all three
+from one value:
+
+| Placement | Read by |
+|---|---|
+| `resource_id` (TOP-LEVEL) | the permit's `target_id` column |
+| `context.target_id` | `firstBindingMismatch`'s expected value |
+| `context.target = { id }` | the `permits` insert |
+
+**This was live here until 2026-09-13.** `authorizeRemote` presented `target_id`
+at verify and never bound it, and `ActionContext.target_id` documented the
+opposite: "Presented at the verify boundary so a permit bound to one target
+cannot verify against another." No permit was ever bound to a target.
+
+Two callers were silently unbound as a result, both now fixed:
+
+- **`deploy_service`** never told the runtime WHICH service it was deploying.
+  `service_name` reached the logs and the returned result and nothing else, so
+  the permit authorized "a production deploy by this actor in this environment"
+  and one permit covered a deploy of any service.
+- **`agentToolGate`** never bound the tool being invoked. `tool_name` rides in
+  context for audit and is NOT one of the runtime's binding fields
+  (`target`/`target_id`/`ref`/`workflow_id`/`run_id`/`commit_sha`), so a permit
+  minted to invoke one tool verified for any other.
+
+The binding is additive: a caller that supplies no target sends a
+byte-identical request to before, pinned by a test.
+
 Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
 
 ## Disabled Endpoints (atlasent-api)

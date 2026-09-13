@@ -1940,6 +1940,115 @@ describe("atlasent_evaluate execution payload binding", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Target binding — presenting target_id at verify is not enough
+//
+// v1-verify-permit compares a presented target against a value it reads back
+// from the EVALUATE call: firstBindingMismatch reads target/target_id out of the
+// stored request_context, and the legacy permits-row path reads the target_id
+// column (populated from top-level resource_id / context.target.id). Its guard
+// is present-and-bound-and-differ, so with nothing bound at evaluate the
+// comparison is skipped entirely and a permit minted for target A redeems while
+// presenting target B.
+// ---------------------------------------------------------------------------
+
+describe("target binding", () => {
+  it("binds the target in every shape the runtime reads it from", async () => {
+    forceRemoteMode();
+    const captured: { body: unknown }[] = [];
+    globalThis.fetch = mock.fn(async (_url, init) => {
+      captured.push({ body: JSON.parse((init?.body as string) ?? "{}") });
+      return new Response(JSON.stringify({ decision: "allow", permit_token: "pt_t1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: {
+        actor_id: "user:alice",
+        action_type: "production.deploy",
+        target_id: "api-service",
+      },
+    });
+    const body = captured[0].body as Record<string, unknown>;
+    const ctx = (body.context ?? {}) as Record<string, unknown>;
+    // top-level: drives the permit's target_id column
+    assert.equal(body.resource_id, "api-service");
+    // context.target_id: firstBindingMismatch's expected value
+    assert.equal(ctx.target_id, "api-service");
+    // context.target.id: the permits-row insert reads this shape
+    assert.deepEqual(ctx.target, { id: "api-service" });
+  });
+
+  it("sends a byte-identical request when no target is supplied", async () => {
+    // The binding is additive. A caller that never set a target must not start
+    // sending resource_id or an invented context.
+    forceRemoteMode();
+    const captured: { body: unknown }[] = [];
+    globalThis.fetch = mock.fn(async (_url, init) => {
+      captured.push({ body: JSON.parse((init?.body as string) ?? "{}") });
+      return new Response(JSON.stringify({ decision: "allow", permit_token: "pt_t2" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: { actor_id: "user:alice", action_type: "production.deploy" },
+    });
+    const body = captured[0].body as Record<string, unknown>;
+    assert.equal(body.resource_id, undefined);
+    assert.equal(body.context, undefined);
+  });
+
+  it("deploy_service tells the runtime WHICH service it is deploying", async () => {
+    // Without this the permit authorizes "a production deploy by this actor in
+    // this environment" and never names the service, so one permit covers a
+    // deploy of any of them.
+    forceRemoteMode();
+    const bodies: Record<string, unknown>[] = [];
+    globalThis.fetch = mock.fn(async (url, init) => {
+      bodies.push({ url: String(url), ...JSON.parse((init?.body as string) ?? "{}") });
+      return new Response(
+        JSON.stringify({ decision: "allow", permit_token: "pt_d1", valid: true, outcome: "allow" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const { client } = await setup();
+    await client.callTool({
+      name: "deploy_service",
+      arguments: { actor_id: "user-1", service_name: "billing-service", environment: "production" },
+    });
+
+    // deploy_service makes TWO evaluate calls: the outer agent.tool.invoke gate
+    // first, then production.deploy. Select by action_type, not by order.
+    const evals = bodies.filter((b) => String(b.url).includes("/v1-evaluate"));
+    const deployEval = evals.find((b) => b.action_type === "production.deploy");
+    const gateEval = evals.find((b) => b.action_type === "agent.tool.invoke");
+    const verifies = bodies.filter((b) => String(b.url).includes("/v1-verify-permit"));
+    assert.ok(deployEval, "a production.deploy evaluate must have been made");
+    assert.ok(gateEval, "the outer agent.tool.invoke gate must have been evaluated");
+
+    // The deploy names the service it is deploying.
+    const ctx = (deployEval!.context ?? {}) as Record<string, unknown>;
+    assert.equal(deployEval!.resource_id, "billing-service");
+    assert.equal(ctx.target_id, "billing-service");
+    // ...and the SAME target is presented at verify, so the two can be compared.
+    assert.ok(
+      verifies.some((v) => v.target_id === "billing-service"),
+      "the deploy's verify must present the service as target_id",
+    );
+
+    // The outer gate names the tool it is authorizing, for the same reason.
+    const gateCtx = (gateEval!.context ?? {}) as Record<string, unknown>;
+    assert.equal(gateEval!.resource_id, "deploy_service");
+    assert.equal(gateCtx.target_id, "deploy_service");
+  });
+});
+
 describe("atlasent_evaluate explain + risk_envelope", () => {
   it("forwards explain=true to the API request body", async () => {
     forceRemoteMode();

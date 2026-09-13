@@ -221,6 +221,11 @@ async function agentToolGate(
     actor_id: actorId,
     environment,
     tool_name: toolName,
+    // The tool being invoked is this gate's target. `tool_name` alone rides in
+    // context for audit and is NOT one of the runtime's binding fields
+    // (target/target_id/ref/workflow_id/run_id/commit_sha), so without this a
+    // permit minted to invoke one tool verifies for any other.
+    target_id: toolName,
     ...(approvals && approvals.length ? { approvals } : {}),
   };
   const gate = await authorize(ctx);
@@ -498,6 +503,12 @@ export function createServer(): McpServer {
         action_type: "production.deploy",
         actor_id: args.actor_id,
         environment: args.environment,
+        // The service being deployed MUST reach the authorization request.
+        // Without it the permit authorizes "a production deploy by this actor
+        // in this environment" and says nothing about WHICH service, so one
+        // permit covers a deploy of any of them and the target-substitution
+        // check at verify has no binding to compare against.
+        target_id: args.service_name,
         ...(args.approvals ? { approvals: args.approvals } : {}),
         ...(args.change_window ? { change_window: args.change_window } : {}),
       };
@@ -571,6 +582,7 @@ export function createServer(): McpServer {
           .optional()
           .describe("When true, populates risk_envelope.factors with a per-factor score breakdown"),
         execution_payload_hash: payloadHash,
+        target_id: targetId,
       }),
       annotations: {
         title: "AtlaSent — Evaluate (Remote API)",
@@ -595,6 +607,7 @@ export function createServer(): McpServer {
           ...(args.execution_payload_hash !== undefined
             ? { execution_payload_hash: args.execution_payload_hash }
             : {}),
+          ...(args.target_id !== undefined ? { target_id: args.target_id } : {}),
         });
         log("atlasent_evaluate", { result });
         return toolResult(result);
