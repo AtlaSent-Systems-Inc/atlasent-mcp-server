@@ -366,6 +366,38 @@ export function normalizePayloadHash(value: string): string {
   return bare.toLowerCase();
 }
 
+/**
+ * Attach the target binding to an evaluate request, in every shape the runtime
+ * actually reads it from.
+ *
+ * Presenting `target_id` at verify does NOTHING on its own. `v1-verify-permit`
+ * compares it against a value it reads back from the evaluate call
+ * (`firstBindingMismatch` reads `target`/`target_id` out of the stored
+ * `request_context`; the legacy permits-row path reads the `target_id` column).
+ * Its guard is present-and-bound-and-differ — "an omitted or unbound target
+ * never denies" — so when nothing bound a target at evaluate, the comparison is
+ * skipped and a permit minted for target A redeems while presenting target B.
+ * That is the same structural hole `normalizePayloadHash` documents for the
+ * execution digest, one field over.
+ *
+ * Three consumers, three placements, all populated from the one value:
+ *   - `resource_id` (TOP-LEVEL)   → the permit's `target_id` column
+ *   - `context.target_id`         → `firstBindingMismatch`'s expected value
+ *   - `context.target = { id }`   → the `permits` insert's `context.target.id`
+ *
+ * Applied only when the caller supplies a target, so a caller that never set
+ * one sends a byte-identical request to before.
+ */
+function applyTargetBinding(
+  body: Record<string, unknown>,
+  context: Record<string, unknown> | undefined,
+  targetId: string | undefined,
+): Record<string, unknown> | undefined {
+  if (targetId === undefined || targetId === "") return context;
+  body.resource_id = targetId;
+  return { ...(context ?? {}), target_id: targetId, target: { id: targetId } };
+}
+
 interface EvaluateRequestBodyInput {
   action_type: string;
   actor_id: string;
@@ -373,6 +405,7 @@ interface EvaluateRequestBodyInput {
   explain?: boolean;
   state_snapshot?: Record<string, unknown>;
   execution_payload_hash?: string;
+  target_id?: string;
 }
 
 function buildEvaluateRequestBody(input: EvaluateRequestBodyInput): Record<string, unknown> {
@@ -380,7 +413,11 @@ function buildEvaluateRequestBody(input: EvaluateRequestBodyInput): Record<strin
     action_type: input.action_type,
     actor_id: input.actor_id,
   };
-  if (input.context !== undefined) body.context = input.context;
+  // Must run BEFORE context is attached: it sets `resource_id` top-level and
+  // returns the context to use, which may be created here when the caller
+  // passed none. See applyTargetBinding.
+  const boundContext = applyTargetBinding(body, input.context, input.target_id);
+  if (boundContext !== undefined) body.context = boundContext;
   if (input.explain !== undefined) body.explain = input.explain;
   // state_snapshot is a top-level EvaluateBody field required when
   // requires_state_snapshot=true (all classes since backfill 20260603000019).
@@ -408,6 +445,9 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     // verify boundary against a permit that was never bound to it is a no-op:
     // the runtime refuses to trust an unbound caller-supplied digest.
     ...(ctx.payload_hash !== undefined ? { execution_payload_hash: ctx.payload_hash } : {}),
+    // Bind the target too, for the same reason: a target presented at verify
+    // against a permit never bound to one is not checked at all.
+    ...(ctx.target_id !== undefined ? { target_id: ctx.target_id } : {}),
   });
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
@@ -550,6 +590,7 @@ export interface EvaluateParams {
   explain?: boolean;
   state_snapshot?: Record<string, unknown>;
   execution_payload_hash?: string;
+  target_id?: string;
 }
 
 // EvaluateResponse is the RAW /v1-evaluate response returned verbatim by the
@@ -576,6 +617,7 @@ export async function evaluateAction(params: EvaluateParams): Promise<EvaluateRe
     ...(params.execution_payload_hash !== undefined
       ? { execution_payload_hash: params.execution_payload_hash }
       : {}),
+    ...(params.target_id !== undefined ? { target_id: params.target_id } : {}),
   });
   return post<EvaluateResponse>("/v1-evaluate", body);
 }
