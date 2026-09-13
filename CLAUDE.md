@@ -111,21 +111,52 @@ Hosted backend: `atlasent-api/supabase/functions/v1-{evaluate,verify-permit}/han
 Two properties are load-bearing, and getting either wrong disables the check
 silently, with no error anywhere:
 
-1. **Plain 64-char lowercase hex — no `sha256:` prefix.** `v1-evaluate` binds
-   `execution_hash_expected` only when the value matches `/^[0-9a-f]{64}$/`. A
-   non-matching value is **dropped, not rejected**.
+1. **Bare 64-char hex — no `sha256:` prefix.** `v1-evaluate` binds
+   `execution_hash_expected` only when the value matches `/^[0-9a-f]{64}$/i`
+   (case-insensitive, normalized to lowercase before binding). A non-matching
+   value is **dropped, not rejected** on the ordinary-action path; the four
+   mandatory-change-control action types and any class declaring
+   `material_execution_fields` deny it outright instead.
 2. **Top level of the evaluate body as `execution_payload_hash`, never inside
    `context`.** The handler destructures it from `body`, alongside `context`.
 
-When the permit mints unbound, `v1-verify-permit` records a presented digest as
-`payload_hash_supplied_unbound` and **explicitly does not trust it** — its
-`PAYLOAD_MISMATCH` branch is guarded by `if (boundPayloadHash)` and is
-unreachable. The altered call executes.
+**Corrected 2026-09-13, same day, by a Copilot review on atlasent-api#3355 —
+an earlier version of this section said the permit mints UNBOUND, leaving
+`PAYLOAD_MISMATCH` structurally unreachable so "the altered call executes."
+That was wrong, in the direction that overstates the risk.** `v1-evaluate`
+persists its own `proofPayloadHash` (a hash of the whole request body) as
+`execution_evaluations.payload_hash`, and `v1-verify-permit` adopts THAT as
+`boundPayloadHash` (`handler.ts` ~L1612) whenever the signed token carries no
+`execution_hash_expected`. The permit is bound — just to the server's hash
+instead of yours. Three outcomes, none of which is the check you think you
+enabled:
+
+- **You present your own digest at verify** -> compared against a hash of the
+  whole evaluate request body, which it can never equal -> a *deterministic*
+  `PAYLOAD_MISMATCH` on every call, altered payload or not. Fail-closed, and
+  useless: it cannot distinguish tampering from normal operation.
+- **You present nothing, production permit** -> `PAYLOAD_HASH_REQUIRED`.
+- **You present nothing, non-production** -> verification passes with no
+  payload check at all. This is the genuinely unchecked case.
+
+`payload_hash_supplied_unbound` fires only when nothing is bound, which on the
+ordinary path essentially never happens. The real defect is that your digest
+never constrains execution — not that a disabled check lets tampering through.
+`atlasent-action/src/executionPayloadHash.ts` had already named both halves
+("there is no way for the client to detect the failure at evaluate time", and
+the resulting "deterministic `PAYLOAD_MISMATCH` on every verify, every time");
+the original wording here quoted the first and missed the second.
+
+As of atlasent-api#3355, `v1-evaluate` answers this directly: its response
+carries `execution_payload_hash_accepted` whenever a permit was issued and the
+request supplied a digest — including one nested under `context`, which is
+never a binding but is reported `false` rather than omitted. Check it.
 
 **This was live here until 2026-09-13.** `authorizeRemote` accepted
 `ctx.payload_hash` and presented it at verify but never sent
-`execution_payload_hash` at evaluate, so every permit it minted was unbound and
-the digest it presented was ignored. `ActionContext.payload_hash` even
+`execution_payload_hash` at evaluate, so every permit it minted was bound to the
+server's own request hash rather than to the arguments, and the digest it
+presented could never match it. `ActionContext.payload_hash` even
 documented "Bind it at evaluate via `execution_payload_hash`" — no code did.
 The unit test asserted a placeholder digest (`"sha256:args-A"`) was forwarded
 verbatim, and passed green over a value the runtime can never bind.
