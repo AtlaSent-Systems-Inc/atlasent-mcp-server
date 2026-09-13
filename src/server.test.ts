@@ -555,6 +555,10 @@ describe("verify_permit (local mode)", () => {
   });
 });
 
+// A real SHA-256 digest: 64 lowercase hex characters, the only form
+// v1-evaluate binds into the signed permit.
+const HEX64_A = "a".repeat(64);
+
 describe("verify_permit (remote mode)", () => {
   it("maps server allow → verified", async () => {
     forceRemoteMode();
@@ -682,7 +686,7 @@ describe("verify_permit (remote mode)", () => {
         ...EVAL_ARGS,
         permit_token: "pt_abc",
         target_id: "service:hello",
-        payload_hash: "sha256:args-A",
+        payload_hash: `sha256:${HEX64_A}`,
       },
     });
     assert.ok(capturedUrl.includes("/v1-verify-permit"));
@@ -691,9 +695,38 @@ describe("verify_permit (remote mode)", () => {
     assert.equal(capturedBody.actor_id, "user-1");
     // environment must be presented so ENVIRONMENT_MISMATCH can fire (acceptance AC-6)
     assert.equal(capturedBody.environment, "production");
-    // payload_hash must be presented so PAYLOAD_MISMATCH can fire (acceptance AC-5)
-    assert.equal(capturedBody.payload_hash, "sha256:args-A");
+    // payload_hash must be presented so PAYLOAD_MISMATCH can fire (acceptance AC-5),
+    // normalized to the bare 64-hex form the runtime binds. This assertion
+    // previously used the placeholder "sha256:args-A" and asserted it was
+    // forwarded verbatim — a digest the runtime can never bind, so the test
+    // was green over a shape that disabled the very check it names.
+    assert.equal(capturedBody.payload_hash, HEX64_A);
     assert.equal(capturedBody.target_id, "service:hello");
+  });
+
+  it("rejects a malformed payload_hash instead of sending one the runtime will drop", async () => {
+    // Fail-closed at every layer. v1-evaluate DROPS a digest that does not match
+    // /^[0-9a-f]{64}$/ rather than rejecting it, minting an UNBOUND permit; and
+    // v1-verify-permit will not trust a presented digest against an unbound
+    // permit. Sending a malformed value therefore silently disables
+    // PAYLOAD_MISMATCH, so refuse at the client boundary instead.
+    forceRemoteMode();
+    let called = false;
+    globalThis.fetch = mock.fn(async (): Promise<Response> => {
+      called = true;
+      return new Response(JSON.stringify({ valid: true, outcome: "allow" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "verify_permit",
+      arguments: { ...EVAL_ARGS, permit_token: "pt_abc", payload_hash: "sha256:args-A" },
+    });
+    const data = parseResult(result);
+    assert.equal(data.valid, false);
+    assert.equal(called, false, "no verify request may be sent for a malformed digest");
   });
 });
 
@@ -1845,6 +1878,67 @@ describe("atlasent_delete_webhook", () => {
 // ---------------------------------------------------------------------------
 // atlasent_evaluate — explain flag and risk_envelope
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// atlasent_evaluate — execution payload binding (AC-5)
+//
+// The binding must be TOP-LEVEL and plain 64-char lowercase hex. v1-evaluate
+// destructures `execution_payload_hash` from `body` (never from `context`) and
+// binds it into the signed permit only when it matches /^[0-9a-f]{64}$/ — a
+// non-matching value is DROPPED, not rejected, so the permit mints unbound and
+// PAYLOAD_MISMATCH becomes unreachable at verify.
+// ---------------------------------------------------------------------------
+
+describe("atlasent_evaluate execution payload binding", () => {
+  it("sends execution_payload_hash top-level, normalized to bare 64-hex", async () => {
+    forceRemoteMode();
+    const captured: { body: unknown }[] = [];
+    globalThis.fetch = mock.fn(async (_url, init) => {
+      captured.push({ body: JSON.parse((init?.body as string) ?? "{}") });
+      return new Response(JSON.stringify({ decision: "allow", permit_token: "pt_bind_1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: {
+        actor_id: "user:alice",
+        action_type: "agent.tool.invoke",
+        // deliberately prefixed and uppercase — both are normalized away
+        execution_payload_hash: `sha256:${"A".repeat(64)}`,
+      },
+    });
+    const body = captured[0].body as Record<string, unknown>;
+    assert.equal(body.execution_payload_hash, "a".repeat(64));
+    const ctx = (body.context ?? {}) as Record<string, unknown>;
+    assert.equal(ctx.execution_payload_hash, undefined, "must not be nested under context");
+  });
+
+  it("refuses a malformed digest rather than minting an unbound permit", async () => {
+    forceRemoteMode();
+    let called = false;
+    globalThis.fetch = mock.fn(async () => {
+      called = true;
+      return new Response(JSON.stringify({ decision: "allow", permit_token: "pt_bind_2" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: {
+        actor_id: "user:alice",
+        action_type: "agent.tool.invoke",
+        execution_payload_hash: "not-a-digest",
+      },
+    });
+    assert.equal(result.isError, true);
+    assert.equal(called, false, "no evaluate request may be sent for a malformed digest");
+  });
+});
 
 describe("atlasent_evaluate explain + risk_envelope", () => {
   it("forwards explain=true to the API request body", async () => {

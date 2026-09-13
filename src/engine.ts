@@ -337,12 +337,42 @@ interface RawEvaluate {
 // authorizeRemote never passes `explain` (so it is omitted, exactly as
 // before) and always passes a shaped context; evaluateAction includes
 // context/explain only when defined.
+/**
+ * Normalize an execution payload digest to the ONE form `/v1-evaluate` binds.
+ *
+ * The runtime binds `execution_hash_expected` into the signed permit only when
+ * the TOP-LEVEL `execution_payload_hash` matches `/^[0-9a-f]{64}$/`, and it
+ * DROPS a non-matching value rather than rejecting it — so a malformed digest
+ * mints an unbound permit with no error anywhere. `v1-verify-permit` then
+ * records a presented digest against an unbound permit as
+ * `payload_hash_supplied_unbound` and explicitly does not trust it, leaving its
+ * `PAYLOAD_MISMATCH` branch (guarded by `if (boundPayloadHash)`) unreachable.
+ * The altered call executes.
+ *
+ * Fail-closed at every layer: throw here rather than send something the runtime
+ * will quietly discard. A `sha256:` prefix is accepted and stripped because it
+ * is the natural mistake and silently produced exactly that defect elsewhere.
+ */
+export function normalizePayloadHash(value: string): string {
+  const bare = value.startsWith("sha256:") ? value.slice("sha256:".length) : value;
+  if (!/^[0-9a-fA-F]{64}$/.test(bare)) {
+    throw new Error(
+      "execution_payload_hash must be a SHA-256 digest as 64 hex characters " +
+        `(optionally "sha256:"-prefixed); got ${bare.length} character(s). ` +
+        "A malformed digest is silently dropped by the runtime and mints an " +
+        "UNBOUND permit, which disables PAYLOAD_MISMATCH.",
+    );
+  }
+  return bare.toLowerCase();
+}
+
 interface EvaluateRequestBodyInput {
   action_type: string;
   actor_id: string;
   context?: Record<string, unknown>;
   explain?: boolean;
   state_snapshot?: Record<string, unknown>;
+  execution_payload_hash?: string;
 }
 
 function buildEvaluateRequestBody(input: EvaluateRequestBodyInput): Record<string, unknown> {
@@ -355,6 +385,11 @@ function buildEvaluateRequestBody(input: EvaluateRequestBodyInput): Record<strin
   // state_snapshot is a top-level EvaluateBody field required when
   // requires_state_snapshot=true (all classes since backfill 20260603000019).
   body.state_snapshot = input.state_snapshot ?? { source: "atlasent-mcp", complete: true };
+  // TOP-LEVEL, never inside `context` — the handler destructures this field
+  // from `body` alongside `context`. See normalizePayloadHash.
+  if (input.execution_payload_hash !== undefined) {
+    body.execution_payload_hash = normalizePayloadHash(input.execution_payload_hash);
+  }
   return body;
 }
 
@@ -369,6 +404,10 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     actor_id: ctx.actor_id,
     context,
     state_snapshot: ctx.state_snapshot,
+    // Bind the digest here, not only at verify. Presenting payload_hash at the
+    // verify boundary against a permit that was never bound to it is a no-op:
+    // the runtime refuses to trust an unbound caller-supplied digest.
+    ...(ctx.payload_hash !== undefined ? { execution_payload_hash: ctx.payload_hash } : {}),
   });
 
   const data = await post<RawEvaluate>("/v1-evaluate", body);
@@ -450,7 +489,7 @@ async function verifyRemote(token: string, ctx: ActionContext): Promise<VerifyRe
     actor_id: ctx.actor_id,
     environment: ctx.environment,
     ...(ctx.target_id ? { target_id: ctx.target_id } : {}),
-    ...(ctx.payload_hash ? { payload_hash: ctx.payload_hash } : {}),
+    ...(ctx.payload_hash ? { payload_hash: normalizePayloadHash(ctx.payload_hash) } : {}),
   };
 
   const data = await post<RawVerify>("/v1-verify-permit", body);
@@ -510,6 +549,7 @@ export interface EvaluateParams {
   context?: Record<string, unknown>;
   explain?: boolean;
   state_snapshot?: Record<string, unknown>;
+  execution_payload_hash?: string;
 }
 
 // EvaluateResponse is the RAW /v1-evaluate response returned verbatim by the
@@ -533,6 +573,9 @@ export async function evaluateAction(params: EvaluateParams): Promise<EvaluateRe
     context: params.context,
     explain: params.explain,
     state_snapshot: params.state_snapshot,
+    ...(params.execution_payload_hash !== undefined
+      ? { execution_payload_hash: params.execution_payload_hash }
+      : {}),
   });
   return post<EvaluateResponse>("/v1-evaluate", body);
 }
