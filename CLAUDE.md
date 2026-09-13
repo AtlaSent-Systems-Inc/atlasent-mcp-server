@@ -105,6 +105,38 @@ Hosted backend: `atlasent-api/supabase/functions/v1-{evaluate,verify-permit}/han
 - `POST /v1-evaluate`: `{ action_type, actor_id, context }` -> `{ decision, permit_token?, request_id, expires_at?, denial? }`
 - `POST /v1-verify-permit`: `{ permit_token, action_type, actor_id }` -> `{ valid, outcome, verify_error_code?, reason? }`
 
+### Execution payload binding (AC-5) — presenting at verify is not enough
+
+`PAYLOAD_MISMATCH` fires only when the permit was BOUND to a digest at evaluate.
+Two properties are load-bearing, and getting either wrong disables the check
+silently, with no error anywhere:
+
+1. **Plain 64-char lowercase hex — no `sha256:` prefix.** `v1-evaluate` binds
+   `execution_hash_expected` only when the value matches `/^[0-9a-f]{64}$/`. A
+   non-matching value is **dropped, not rejected**.
+2. **Top level of the evaluate body as `execution_payload_hash`, never inside
+   `context`.** The handler destructures it from `body`, alongside `context`.
+
+When the permit mints unbound, `v1-verify-permit` records a presented digest as
+`payload_hash_supplied_unbound` and **explicitly does not trust it** — its
+`PAYLOAD_MISMATCH` branch is guarded by `if (boundPayloadHash)` and is
+unreachable. The altered call executes.
+
+**This was live here until 2026-09-13.** `authorizeRemote` accepted
+`ctx.payload_hash` and presented it at verify but never sent
+`execution_payload_hash` at evaluate, so every permit it minted was unbound and
+the digest it presented was ignored. `ActionContext.payload_hash` even
+documented "Bind it at evaluate via `execution_payload_hash`" — no code did.
+The unit test asserted a placeholder digest (`"sha256:args-A"`) was forwarded
+verbatim, and passed green over a value the runtime can never bind.
+
+`normalizePayloadHash` (`src/engine.ts`) is now the single entry point: it
+strips a `sha256:` prefix, lowercases, and **throws** on anything that is not a
+64-hex digest. Throwing is the fail-closed choice — sending a value the runtime
+will quietly discard is strictly worse than refusing at the client boundary.
+`atlasent-llm-integrations` carried the mirror-image form of this defect (it
+bound at evaluate, in `context`, prefixed) and was fixed the same day.
+
 Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
 
 ## Disabled Endpoints (atlasent-api)

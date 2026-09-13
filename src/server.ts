@@ -570,6 +570,7 @@ export function createServer(): McpServer {
           .boolean()
           .optional()
           .describe("When true, populates risk_envelope.factors with a per-factor score breakdown"),
+        execution_payload_hash: payloadHash,
       }),
       annotations: {
         title: "AtlaSent — Evaluate (Remote API)",
@@ -591,6 +592,9 @@ export function createServer(): McpServer {
           action_type: args.action_type,
           context: args.context,
           ...(args.explain !== undefined ? { explain: args.explain } : {}),
+          ...(args.execution_payload_hash !== undefined
+            ? { execution_payload_hash: args.execution_payload_hash }
+            : {}),
         });
         log("atlasent_evaluate", { result });
         return toolResult(result);
