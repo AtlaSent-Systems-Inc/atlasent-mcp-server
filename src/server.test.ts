@@ -2039,4 +2039,44 @@ describe("atlasent_lookup_action (Canon-native)", () => {
     const rel = action.relationships as { assertions: string[] };
     assert.ok(rel.assertions.includes("identity"), "agent.tool.invoke requires identity assertion");
   });
+
+  it("resolves a plain-language query to a Canon entry with a confident retrieval verdict", async () => {
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_lookup_action",
+      arguments: { query: "deploy the api service to prod" },
+    });
+    const body = parseResult(result);
+    assert.equal(body.found, true);
+    assert.equal(result.isError, undefined, "a successful lookup is not an error");
+    const retrieval = body.retrieval as { mode: string; confidence: string; candidates: Array<{ slug: string }> };
+    assert.equal(retrieval.mode, "ranked");
+    assert.equal(retrieval.confidence, "confident");
+    assert.equal(retrieval.candidates[0].slug, "production.deploy");
+    const first = (body.actions as Array<Record<string, unknown>>)[0];
+    assert.equal(first.slug, "production.deploy");
+    assert.match(String(first.canon_id), /^CANON-\d{6}$/);
+    assert.ok(first.relationships, "ranked results are enriched with graph relationships like slug results");
+  });
+
+  it("returns found:false with the intake hint, never an invented slug, for a non-Canon request", async () => {
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_lookup_action",
+      arguments: { query: "provision a brand new saas tenant with billing" },
+    });
+    const body = parseResult(result);
+    const retrieval = body.retrieval as { confidence: string; candidates: Array<{ slug: string }> };
+    // Either the Canon has nothing (none) or it is not sure (ambiguous) —
+    // but it must never report `confident` for an action the Canon lacks.
+    assert.notEqual(retrieval.confidence, "confident", JSON.stringify(body));
+    if (retrieval.confidence === "none") {
+      assert.equal(body.found, false);
+      assert.deepEqual(body.actions, []);
+      assert.match(String(body.hint), /LIFECYCLE\.md/, "no-match hint points at the Canon intake pipeline");
+    }
+    for (const c of retrieval.candidates) {
+      assert.doesNotMatch(c.slug, /tenant\.provision/, "the tool must not synthesize a slug");
+    }
+  });
 });
