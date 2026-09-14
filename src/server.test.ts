@@ -1982,6 +1982,31 @@ describe("target binding", () => {
     assert.deepEqual(ctx.target, { id: "api-service" });
   });
 
+  it("preserves caller target metadata while replacing the authoritative id", async () => {
+    forceRemoteMode();
+    const captured: { body: unknown }[] = [];
+    globalThis.fetch = mock.fn(async (_url, init) => {
+      captured.push({ body: JSON.parse((init?.body as string) ?? "{}") });
+      return new Response(JSON.stringify({ decision: "allow", permit_token: "pt_t_meta" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_evaluate",
+      arguments: {
+        actor_id: "user:alice",
+        action_type: "production.deploy",
+        target_id: "api-service",
+        context: { target: { kind: "service", region: "us-east-1", id: "stale" } },
+      },
+    });
+    const body = captured[0].body as Record<string, unknown>;
+    const ctx = body.context as Record<string, unknown>;
+    assert.deepEqual(ctx.target, { kind: "service", region: "us-east-1", id: "api-service" });
+  });
+
   it("sends a byte-identical request when no target is supplied", async () => {
     // The binding is additive. A caller that never set a target must not start
     // sending resource_id or an invented context.
