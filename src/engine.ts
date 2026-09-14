@@ -395,7 +395,11 @@ function applyTargetBinding(
 ): Record<string, unknown> | undefined {
   if (targetId === undefined || targetId === "") return context;
   body.resource_id = targetId;
-  return { ...(context ?? {}), target_id: targetId, target: { id: targetId } };
+  const existingTarget = context?.target;
+  const target = existingTarget && typeof existingTarget === "object" && !Array.isArray(existingTarget)
+    ? { ...(existingTarget as Record<string, unknown>), id: targetId }
+    : { id: targetId };
+  return { ...(context ?? {}), target_id: targetId, target };
 }
 
 interface EvaluateRequestBodyInput {
