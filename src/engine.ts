@@ -342,12 +342,33 @@ interface RawEvaluate {
  *
  * The runtime binds `execution_hash_expected` into the signed permit only when
  * the TOP-LEVEL `execution_payload_hash` matches `/^[0-9a-f]{64}$/`, and it
- * DROPS a non-matching value rather than rejecting it — so a malformed digest
- * mints an unbound permit with no error anywhere. `v1-verify-permit` then
- * records a presented digest against an unbound permit as
- * `payload_hash_supplied_unbound` and explicitly does not trust it, leaving its
- * `PAYLOAD_MISMATCH` branch (guarded by `if (boundPayloadHash)`) unreachable.
- * The altered call executes.
+ * DROPS a non-matching value rather than rejecting it — no error anywhere.
+ *
+ * CORRECTED 2026-09-13 (atlasent-api#3355, Copilot review). This comment used
+ * to continue: the permit "mints unbound", leaving `PAYLOAD_MISMATCH`
+ * unreachable, so "the altered call executes." That OVERSTATES the risk and is
+ * wrong — this repo's own CLAUDE.md already carried the correction while this
+ * comment did not. `v1-evaluate` persists its own `proofPayloadHash` (a hash of
+ * the whole request body) as `execution_evaluations.payload_hash`, and
+ * `v1-verify-permit` adopts THAT as `boundPayloadHash` whenever the signed
+ * token carries none. The permit IS bound — to the server's hash rather than
+ * yours — so `payload_hash_supplied_unbound` fires only when nothing is bound
+ * at all, which on the ordinary path essentially never happens. Three
+ * outcomes, none of them the check you meant to enable:
+ *
+ *   - present your own digest      -> compared against a hash of the whole
+ *                                     request, which it can never equal: a
+ *                                     DETERMINISTIC `PAYLOAD_MISMATCH` on
+ *                                     every call, tampering or not.
+ *   - present nothing, production  -> `PAYLOAD_HASH_REQUIRED`.
+ *   - present nothing, elsewhere   -> passes with no payload check at all.
+ *                                     This is the genuinely unchecked case.
+ *
+ * So the defect a malformed digest causes is that it never CONSTRAINS
+ * execution — fail-closed but useless in the first two cases, unchecked in the
+ * third — not that an altered payload sails through a disabled check. Which is
+ * why this function still throws: the remedy is unchanged, only the reason is
+ * stated accurately.
  *
  * Fail-closed at every layer: throw here rather than send something the runtime
  * will quietly discard. A `sha256:` prefix is accepted and stripped because it
@@ -378,7 +399,9 @@ export function normalizePayloadHash(value: string): string {
  * never denies" — so when nothing bound a target at evaluate, the comparison is
  * skipped and a permit minted for target A redeems while presenting target B.
  * That is the same structural hole `normalizePayloadHash` documents for the
- * execution digest, one field over.
+ * execution digest, one field over — and here the "altered call executes"
+ * framing IS accurate, because nothing else ever binds a target the way
+ * `proofPayloadHash` backstops the execution digest.
  *
  * Three consumers, three placements, all populated from the one value:
  *   - `resource_id` (TOP-LEVEL)   → the permit's `target_id` column
