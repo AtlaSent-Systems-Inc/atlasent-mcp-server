@@ -256,6 +256,48 @@ See `atlasent-api/docs/runbooks/CRON_VAULT_SECRETS.md` for the full setup proced
 
 Scoped package `@atlasent/mcp-server`, `publishConfig.access: public`. Tag `v*` triggers `publish.yml`, which runs an AtlaSent `package.release` gate, then build, tests, and `npm publish --access public` using the `NPM_TOKEN` repo secret. **Not `--provenance`** — provenance requires a public source repo, and this repo is private; a cosign keyless-signed tarball (uploaded as a build artifact) is the supply-chain attestation instead. **Correction (2026-08-30):** this section previously claimed no `v*` tag had ever been pushed and no version had ever been published — that was based on an incomplete local git clone (`git tag -l` empty), not the live registry. Verified directly against `registry.npmjs.org`: **`2.11.0` has been published to npm since 2026-06-09** (via a manual `workflow_dispatch` run, not a tag-triggered one), and the `v2.11.0` git tag has existed on GitHub since 2026-06-10 (`create-v2-11-0-tag.yml` run #1, which pinned it to a specific historical commit SHA rather than the HEAD at dispatch time). Before assuming a tag or version is missing, check the live registry/GitHub state directly rather than a local checkout's `git tag -l`, which may not have fetched tags. Submission to the **MCP Registry remains genuinely outstanding** — confirmed via a live query against `registry.modelcontextprotocol.io` returning zero results.
 
+### The `package.release` gate had no template for this repo until 2026-09-19
+
+Both `publish.yml` and `publish-mcp-registry.yml` call `package.release` against
+runtime prod (`kttccumlnmdtupgbyfue`). Until 2026-09-19 the org's bundle carried
+**no template matching this repository at all**, so both gates were
+guaranteed-deny (`No template condition matched`) — the same class of gap
+`atlasent-control-plane` hit twice and documented at length. That is why the
+2026-06-09 publish went out via `workflow_dispatch`: a real tag push would have
+been denied at the gate.
+
+Bundle versioned forward v4 -> **v5** (id `73578fb8-88ef-4c24-978d-24803e31837b`,
+action class `d9116cd9-2a18-4f60-9638-c2996d2f6c2c`, 14 -> 16 templates,
+`allow_actors` unchanged), archive-and-insert in one atomic statement because
+published `constraint_bundles` rows are DB-immutable. The two added templates:
+
+| Template | Matches |
+|---|---|
+| `package_release_atlasent_mcp_server_tag_release_manager` | this repo + `Publish to npm` + `event_name: push` + `^refs/tags/v<semver>(-prerelease)?$` |
+| `package_release_atlasent_mcp_server_registry_release_manager` | this repo + `Publish to MCP Registry` + `context.artifact == "mcp-registry"` + `event_name` in (`workflow_run`, `workflow_dispatch`) |
+
+**The registry template deliberately does NOT carry a tag regex.** On the
+`workflow_run` path — the normal one, since that workflow chains off
+`Publish to npm` — `github.ref` is `refs/heads/main`, not the tag. A tag
+condition there would have denied the real path while passing every test
+written against the dispatch path. Caught before the production write by running
+the drafted templates through the canonical rule engine
+(`atlasent-api/packages/sdk/src/rules.ts`), not by reasoning about them.
+
+**Known limit, not a defect:** `publish.yml`'s own `workflow_dispatch` trigger is
+NOT authorized — a dispatch has `ref: refs/heads/main` and no tag, so it matches
+no template and denies. Releasing from this repo now means pushing a real `v*`
+tag. Do not "fix" that by relaxing the ref condition; the tag binding is what
+makes the permit name a specific version.
+
+Verified post-write, against the STORED row rather than the drafted form:
+exactly one `active` bundle for this action class; a server-side `jsonb`
+equality check confirmed the local copy matched the stored row byte-for-byte
+(so the regex escaping survived the SQL round trip); and re-running the stored
+bundle through the rule engine passed 23/23 assertions — 13 covering the new
+templates (4 allow, 9 deny) and 10 regression assertions confirming all 14
+pre-existing templates still match, each by name.
+
 ## MCP Registry publishing
 
 `server.json` (repo root) is the official MCP Registry manifest
