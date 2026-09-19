@@ -336,8 +336,8 @@ export const ATLAS_CONCEPTS: AtlasConcept[] = [
     "realized_by": [
       "atlasent-cli",
       "deploy-gate",
+      "design-partner-pilot",
       "evaluate-endpoint",
-      "floqast-pilot",
       "guard-cli",
       "gxp-starter",
       "llm-middleware",
@@ -576,9 +576,9 @@ export const ATLAS_CONCEPTS: AtlasConcept[] = [
       "audit-verify-cli",
       "ciso-guide",
       "deploy-gate",
+      "design-partner-pilot",
       "enterprise-architecture",
       "executive-brief",
-      "floqast-pilot",
       "gxp-starter",
       "offline-verifier"
     ]
@@ -883,10 +883,10 @@ export const ATLAS_NODES: AtlasNode[] = [
     ]
   },
   {
-    "id": "floqast-pilot",
-    "name": "FloQast Pilot",
+    "id": "design-partner-pilot",
+    "name": "Design Partner Pilot",
     "kind": "pilot",
-    "ref": "design partner (prospective)",
+    "ref": "prospective design partner (unnamed)",
     "status": "prospective",
     "edges": [
       {
@@ -1403,17 +1403,17 @@ export const ATLAS_EDGES: AtlasEdge[] = [
     "type": "explains"
   },
   {
-    "from": "floqast-pilot",
+    "from": "design-partner-pilot",
     "to": "deploy-gate",
     "type": "uses"
   },
   {
-    "from": "floqast-pilot",
+    "from": "design-partner-pilot",
     "to": "runtime-authority",
     "type": "relies_on"
   },
   {
-    "from": "floqast-pilot",
+    "from": "design-partner-pilot",
     "to": "evidence",
     "type": "relies_on"
   },
