@@ -41,11 +41,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server.git"
+    "url": "git+https://github.com/Atlasent/atlasent-mcp-server.git"
   },
-  "homepage": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server#readme",
+  "homepage": "https://github.com/Atlasent/atlasent-mcp-server#readme",
   "bugs": {
-    "url": "https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server/issues"
+    "url": "https://github.com/Atlasent/atlasent-mcp-server/issues"
   },
   "keywords": [
     "mcp",
@@ -63,5 +63,5 @@
     "execution-boundary"
   ],
   "license": "Apache-2.0",
-  "mcpName": "io.github.atlasent-systems-inc/mcp-server"
+  "mcpName": "io.github.Atlasent/mcp-server"
 }
