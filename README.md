@@ -3,7 +3,7 @@
 MCP server that enforces authorize-before-execute for any MCP-compatible AI agent.
 
 [![npm version](https://img.shields.io/npm/v/@atlasent/mcp-server.svg)](https://www.npmjs.com/package/@atlasent/mcp-server)
-[![CI](https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server/actions/workflows/ci.yml)
+[![CI](https://github.com/Atlasent/atlasent-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/Atlasent/atlasent-mcp-server/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
 **Authorization for consequential AI-agent actions at the execution boundary.**
@@ -41,7 +41,7 @@ npm install @atlasent/mcp-server
 Or run the local demo:
 
 ```bash
-git clone https://github.com/AtlaSent-Systems-Inc/atlasent-mcp-server.git
+git clone https://github.com/Atlasent/atlasent-mcp-server.git
 cd atlasent-mcp-server
 npm install
 npm run build
@@ -94,7 +94,7 @@ agent requests deploy_service
   → simulated deployment effect
 ```
 
-The internal outer gate uses the Canon-backed `agent.tool.invoke` Action (`CANON-000026` / `ACT-0029`) — the same public identifier documented throughout the AtlaSent ecosystem as the canonical generic AI-agent tool invocation. It previously used a legacy, uncatalogued identity, `model.agent.execute_tool`, which had no corresponding `action_classes` provisioning path in the runtime (no seed/migration anywhere creates a row with that slug) — so against a real, unmodified AtlaSent org the outer gate could only ever return `NO_ACTION_CLASS` deny, regardless of the tool-specific inner gate's own decision. Migrating the outer gate onto `agent.tool.invoke` gives it the real "AI Agent Safeguard" provisioning path (`atlasent-api`'s `seed_ai_agent_safeguard_fn.sql` / `provision-agent-pilot-org.sql`) that already exists for exactly this purpose. See AtlaSent-Systems-Inc/atlasent-mcp-server#121 for the full investigation and decision record.
+The internal outer gate uses the Canon-backed `agent.tool.invoke` Action (`CANON-000026` / `ACT-0029`) — the same public identifier documented throughout the AtlaSent ecosystem as the canonical generic AI-agent tool invocation. It previously used a legacy, uncatalogued identity, `model.agent.execute_tool`, which had no corresponding `action_classes` provisioning path in the runtime (no seed/migration anywhere creates a row with that slug) — so against a real, unmodified AtlaSent org the outer gate could only ever return `NO_ACTION_CLASS` deny, regardless of the tool-specific inner gate's own decision. Migrating the outer gate onto `agent.tool.invoke` gives it the real "AI Agent Safeguard" provisioning path (`atlasent-api`'s `seed_ai_agent_safeguard_fn.sql` / `provision-agent-pilot-org.sql`) that already exists for exactly this purpose. See Atlasent/atlasent-mcp-server#121 for the full investigation and decision record.
 
 If either Decision is non-allow **or either Permit fails Verification**, no deployment result is produced.
 
@@ -378,7 +378,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 The same server can be configured in any other MCP-compatible host using its normal MCP server configuration mechanism (`command: npx`, `args: ["-y", "@atlasent/mcp-server"]`, and the same `env` block shown above).
 
-This server is also distributed via the [official MCP Registry](https://registry.modelcontextprotocol.io) (`io.github.atlasent-systems-inc/mcp-server`, manifest at [`server.json`](./server.json)) and [Smithery](https://smithery.ai) (config at [`smithery.yaml`](./smithery.yaml)) — a registry- or Smithery-aware host can discover and install it without a hand-written config block.
+This server is also distributed via the [official MCP Registry](https://registry.modelcontextprotocol.io) (`io.github.Atlasent/mcp-server`, manifest at [`server.json`](./server.json)) and [Smithery](https://smithery.ai) (config at [`smithery.yaml`](./smithery.yaml)) — a registry- or Smithery-aware host can discover and install it without a hand-written config block.
 
 ## Development
 
@@ -400,10 +400,10 @@ Security-sensitive integrations must place the actual side effect **after** the 
 
 ## Related public components
 
-- [`atlasent-sdk`](https://github.com/AtlaSent-Systems-Inc/atlasent-sdk) — language SDKs
-- [`atlasent-action`](https://github.com/AtlaSent-Systems-Inc/atlasent-action) — GitHub Actions integration
-- [`atlasent-verify`](https://github.com/AtlaSent-Systems-Inc/atlasent-verify) — offline evidence verifier
-- [`atlasent-keys`](https://github.com/AtlaSent-Systems-Inc/atlasent-keys) — public verification material
+- [`atlasent-sdk`](https://github.com/Atlasent/atlasent-sdk) — language SDKs
+- [`atlasent-action`](https://github.com/Atlasent/atlasent-action) — GitHub Actions integration
+- [`atlasent-verify`](https://github.com/Atlasent/atlasent-verify) — offline evidence verifier
+- [`atlasent-keys`](https://github.com/Atlasent/atlasent-keys) — public verification material
 
 ## License
 
