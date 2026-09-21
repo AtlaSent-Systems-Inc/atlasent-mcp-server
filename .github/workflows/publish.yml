@@ -55,7 +55,7 @@ jobs:
       #      directly at the runtime project's Supabase URL, matching every
       #      other gate wired this audit.
       - name: AtlaSent release gate
-        uses: atlasent-systems-inc/atlasent-action@v1
+        uses: Atlasent/atlasent-action@v1
         env:
           ATLASENT_API_KEY: ${{ secrets.ATLASENT_API_KEY }}
         with:
