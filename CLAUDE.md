@@ -21,6 +21,7 @@ Cross-repo invariants for this repo:
 ```
 src/
   decision.ts                   Decision / VerifyResult types + toolResult() MCP envelope helper
+  version.ts                    VERSION read from package.json at runtime (serverInfo + User-Agent). Never hardcode it — a literal reported 2.11.0 from 2.12.0; server.test.ts pins it
   localEngine.ts                Tiny rules engine used when no hosted backend is configured
   engine.ts                     authorize() / verify(): dispatches to local or remote; fail-closed wrapper
   server.ts                     createServer(): registers evaluate, verify_permit, deploy_service + 20+ tools
@@ -45,11 +46,15 @@ src/
   integration.test.ts           Live-API tests; require ATLASENT_API_KEY + ATLASENT_BASE_URL, skip otherwise
   integration.write.test.ts     Live-API write tests (mutating tools)
 
+Dockerfile            stdio image; also what Glama builds to introspect tools (no creds -> local mode). CI `docker-smoke` job keeps it answering tools/list
+glama.json            Glama listing ownership (maintainers)
+.devcontainer/        one-click contributor environment (local mode)
+
 examples/
   demo.mjs            End-to-end script: spawns server, drives evaluate -> deploy -> verify flow
 
 .github/workflows/
-  ci.yml              build + test on push/PR, Node 18/20/22 matrix
+  ci.yml              build + test on push/PR, Node 18/20/22 matrix; docker-smoke job
   integration.yml     nightly integration tests against the hosted API
   publish.yml         npm publish --access public (cosign-signed tarball) on v* tag push, gated by an AtlaSent release check
 ```

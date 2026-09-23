@@ -21,3 +21,21 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  # The Dockerfile is what Glama (glama.ai/mcp/servers) builds to start the
+  # server and introspect its tools. Keep it building and answering
+  # tools/list with no credentials, so the listing never goes stale.
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t atlasent-mcp .
+      - name: tools/list over stdio in local mode
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | timeout 30 docker run -i --rm atlasent-mcp > out.jsonl
+          grep -q '"id":2' out.jsonl
+          grep '"id":2' out.jsonl | grep -q '"name":"evaluate"'

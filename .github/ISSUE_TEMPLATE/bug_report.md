@@ -17,3 +17,7 @@ labels: bug
 - MCP client (Claude Desktop / Cursor / Claude Code / other):
 - Node version:
 - @atlasent/mcp-server version:
+- Mode (local / remote):
+- Transport (stdio / streamable-http):
+
+<!-- Please redact API keys, permit tokens, and anything customer-specific. -->

@@ -2308,3 +2308,18 @@ describe("atlasent_lookup_action (Canon-native)", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// serverInfo version — must track package.json (registries display it)
+// ---------------------------------------------------------------------------
+
+describe("serverInfo version", () => {
+  it("reports the package.json version, not a stale literal", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const pkg = JSON.parse(
+      await readFile(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+    const { client } = await setup();
+    assert.equal(client.getServerVersion()?.version, pkg.version);
+  });
+});

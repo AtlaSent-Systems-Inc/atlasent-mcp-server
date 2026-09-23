@@ -16,7 +16,8 @@
  * can produce an MCP error result rather than a silent fallback.
  */
 
-const VERSION = "2.11.0";
+import { VERSION } from "./version.js";
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const STREAM_TIMEOUT_MS = 60_000;
 

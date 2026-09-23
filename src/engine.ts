@@ -31,7 +31,8 @@ import type { ActionContext, Decision, VerifyResult } from "./decision.js";
 import { denyDecision } from "./decision.js";
 import { authorizeLocal, verifyLocal } from "./localEngine.js";
 
-const VERSION = "2.11.0";
+import { VERSION } from "./version.js";
+
 const REQUEST_TIMEOUT_MS = 10_000;
 
 // AbortSignal.timeout() is not available in all Node 22 environments;
