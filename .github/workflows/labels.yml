@@ -1,0 +1,24 @@
+name: Sync labels
+
+# Creates or updates the repo's triage labels. Idempotent (`--force`), so it
+# is safe to re-run; edit the list below and merge to change a label.
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/labels.yml"]
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh label create "rfc"              --force --color "5319e7" --description "Design proposal: discuss before code"
+          gh label create "good first issue" --force --color "7057ff" --description "Small, well-scoped, no AtlaSent account needed"
+          gh label create "help wanted"      --force --color "008672" --description "Maintainers would welcome a PR"
