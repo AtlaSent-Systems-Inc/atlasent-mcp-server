@@ -1,5 +1,66 @@
 # Release Notes
 
+## v2.12.1 — 2026-09-23
+
+Everything that landed on `main` after the `v2.11.0` tag (`c3b2add`).
+`2.12.0` was version-bumped on `main` (`3370382`) but never tagged or
+published — the `package.release` gate had no template for this repo until
+2026-09-19 — so **`2.12.1` is the first npm release since `2.11.0`** and
+carries everything below.
+
+### Security / correctness
+
+- **Payload digest is now bound at evaluate** (`execution_payload_hash`, bare
+  64-hex, top level) instead of only presented at verify, where it could
+  never match. Malformed digests are refused client-side. See CLAUDE.md
+  "Execution payload binding (AC-5)".
+- **Target is now bound at evaluate** (#146, #147), so a permit minted for
+  one target no longer verifies for another. `deploy_service` binds the
+  service name; the agent-tool gate binds the tool name.
+- Protected execution now verifies the permit **before** the native effect
+  (verify-before-execute regression suite added).
+- Top-level `deny_code` / `deny_reason` are read (#133); `escalate` is
+  detected inside batch `items[]` (#139); VQP `hash_mismatch` surfaces as an
+  explicit MCP error (#141).
+- `serverInfo.version` and the `User-Agent` header now come from
+  `package.json` — they reported `2.11.0` on the `2.12.0` code (#154).
+
+### Tools
+
+- **Outer gate migrated to the Canon-backed `agent.tool.invoke`
+  action** (`CANON-000026` / `ACT-0029`), replacing the broken
+  `model.agent.execute_tool` identity described above. See
+  AtlaSent-Systems-Inc/atlasent-mcp-server#121 for the investigation and
+  decision record.
+- `atlasent_lookup_action` — read-only Canon lookup for Action Types, gate
+  flags, authorization patterns, and evidence requirements. Accepts a
+  plain-language `query`, resolved by an offline, deterministic ranker that
+  never invents a slug.
+- `atlasent_atlas_lookup` — read-only lookup of canonical AtlaSent concepts
+  (Authority, Policy, Decision, Permit, Verification, Evidence, Gate, Trust
+  Root).
+- `atlasent_integrity_audit` — read-only Authority-graph consistency audit
+  (hosted mode only).
+- `atlasent_explain_authority`.
+- **`atlasent_trajectory_verify` removed** — the runtime has no
+  `/v1/trajectory-verify` endpoint (part of the atlasent-api#2932
+  public-contract-honesty cleanup lane). See `docs/TRAJECTORY_VERIFY_DEPRECATED.md`.
+  The `2.11.0` release above still had it; do not reintroduce it without a
+  real backing endpoint.
+
+### Distribution and community
+
+- README documents Cursor and Windsurf install in addition to Claude
+  Desktop, and opens with a no-account local-mode quickstart.
+- `Dockerfile` (also used by Glama to introspect the server), `glama.json`,
+  dev container, `CONTRIBUTING.md` rewrite, Code of Conduct, RFC template.
+- Generic REST tools resolve against the gateway root rather than
+  `/functions/v1` (#126).
+- Package metadata points at the `Atlasent` GitHub org.
+
+Use MCP `tools/list` on the installed version for the exact tool set rather
+than trusting this doc.
+
 ## v2.11.0 — 2026-06-09
 
 **Correction (2026-08-30):** this section previously read "Unreleased —
@@ -63,36 +124,6 @@ See the [README](./README.md) for Claude Desktop / Cursor / Windsurf config
 blocks and local/remote mode setup — note the README on `main` describes
 the current (unreleased) state, not necessarily what `v2.11.0` ships; the
 README bundled into the published npm tarball is frozen as of `c3b2add`.
-
-## Unreleased (on `main`, not yet in a published version or tag)
-
-Landed on `main` after the `v2.11.0` tag (`c3b2add`), with no version bump
-or new publish yet:
-
-- **Outer gate migrated to the Canon-backed `agent.tool.invoke`
-  action** (`CANON-000026` / `ACT-0029`), replacing the broken
-  `model.agent.execute_tool` identity described above. See
-  AtlaSent-Systems-Inc/atlasent-mcp-server#121 for the investigation and
-  decision record.
-- `atlasent_lookup_action` — read-only Canon lookup for Action Types, gate
-  flags, authorization patterns, and evidence requirements.
-- `atlasent_atlas_lookup` — read-only lookup of canonical AtlaSent concepts
-  (Authority, Policy, Decision, Permit, Verification, Evidence, Gate, Trust
-  Root).
-- `atlasent_integrity_audit` — read-only Authority-graph consistency audit
-  (hosted mode only).
-- `atlasent_explain_authority`.
-- README now documents Cursor and Windsurf install, in addition to Claude
-  Desktop.
-- **`atlasent_trajectory_verify` removed** — the runtime has no
-  `/v1/trajectory-verify` endpoint (part of the atlasent-api#2932
-  public-contract-honesty cleanup lane). See `docs/TRAJECTORY_VERIFY_DEPRECATED.md`.
-  The `2.11.0` release above still had it; do not reintroduce it without a
-  real backing endpoint.
-
-Anyone relying on the currently-published `2.11.0` package does not have
-the above; use MCP `tools/list` on the installed version for the exact,
-current set rather than trusting this doc.
 
 ---
 
