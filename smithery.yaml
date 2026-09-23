@@ -15,7 +15,7 @@ configSchema:
       default: "https://api.atlasent.io/functions/v1"
     mode:
       type: string
-      description: "remote (default when apiKey is set) or local (in-process rules engine, no API calls)"
+      description: "local (default with no apiKey: offline rules engine, unsigned permits, dev only) or remote (hosted AtlaSent API)"
       enum: ["remote", "local"]
 
 commandFunction: |-

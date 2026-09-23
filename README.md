@@ -5,6 +5,7 @@ MCP server that enforces authorize-before-execute for any MCP-compatible AI agen
 [![npm version](https://img.shields.io/npm/v/@atlasent/mcp-server.svg)](https://www.npmjs.com/package/@atlasent/mcp-server)
 [![CI](https://github.com/Atlasent/atlasent-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/Atlasent/atlasent-mcp-server/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+[![Glama MCP server](https://glama.ai/mcp/servers/Atlasent/atlasent-mcp-server/badge)](https://glama.ai/mcp/servers/Atlasent/atlasent-mcp-server)
 
 **Authorization for consequential AI-agent actions at the execution boundary.**
 
@@ -32,23 +33,55 @@ Action proposed
 
 **Evaluation is not execution. A positive Decision is not the Gate. Permit Verification happens before the protected side effect.**
 
-## Install
+## Quickstart: 60 seconds, no account
 
-```bash
-npm install @atlasent/mcp-server
+You don't need an AtlaSent account or API key to try this server. With no credentials set, it runs in **local mode**: an in-process rules engine that works offline.
+
+Add this to your MCP host config (Claude Desktop, Cursor, Windsurf, and others; per-host file locations are [below](#claude-desktop)):
+
+```json
+{
+  "mcpServers": {
+    "atlasent": {
+      "command": "npx",
+      "args": ["-y", "@atlasent/mcp-server"],
+      "env": { "ATLASENT_MODE": "local" }
+    }
+  }
+}
 ```
 
-Or run the local demo:
+Then ask your agent to *"deploy billing-api to production"*. The built-in rules deny it because it has no approvals. Ask again with an approval and it's allowed, and the server verifies the permit before the simulated deploy runs.
+
+Built-in local rules (`src/localEngine.ts`):
+
+| Situation | Decision |
+|---|---|
+| Production action with no approvals | `deny` |
+| Destructive action (`delete`, `drop`, `purge`, ...) outside a change window | `hold` |
+| Sign / certify / grant / revoke / suspend / resume actions | `deny` |
+| Override / release / export / import / publish actions | `hold` |
+| Anything that passes the rules | `allow` → single-use permit, 5-minute TTL |
+
+Local permits are **unsigned**, so local mode is for development, CI, and trying things out. It's not a production enforcement boundary. The server refuses to fall back to local mode under `NODE_ENV=production`. When you're ready for signed permits, audit evidence, and your organization's own policies, switch to [remote mode](#local-vs-remote-mode).
+
+### Run from source
 
 ```bash
 git clone https://github.com/Atlasent/atlasent-mcp-server.git
 cd atlasent-mcp-server
 npm install
 npm run build
-npm run demo
+npm run demo      # blocked deploy → approved + verified deploy → replay refused, fully offline
 ```
 
-Local mode is a development/demo convenience. Its in-process policy engine and local Permit format are not a substitute for a deployed, accepted customer enforcement topology.
+### Run with Docker
+
+```bash
+docker build -t atlasent-mcp .
+docker run -i --rm atlasent-mcp                                          # local mode, stdio
+docker run -i --rm -e ATLASENT_API_KEY -e ATLASENT_BASE_URL atlasent-mcp  # remote mode
+```
 
 ## Canon-backed Actions
 
@@ -267,7 +300,7 @@ Keep these statements distinct:
 
 | Mode | Purpose |
 |---|---|
-| `local` | Development/demo/CI using the small in-process rules engine. |
+| `local` | Zero-config: offline in-process rules engine, unsigned permits. Development, demos, CI. |
 | `remote` | Calls the configured AtlaSent hosted/runtime API. |
 
 Remote example:
@@ -378,19 +411,31 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 The same server can be configured in any other MCP-compatible host using its normal MCP server configuration mechanism (`command: npx`, `args: ["-y", "@atlasent/mcp-server"]`, and the same `env` block shown above).
 
-This server is also distributed via the [official MCP Registry](https://registry.modelcontextprotocol.io) (`io.github.Atlasent/mcp-server`, manifest at [`server.json`](./server.json)) and [Smithery](https://smithery.ai) (config at [`smithery.yaml`](./smithery.yaml)) — a registry- or Smithery-aware host can discover and install it without a hand-written config block.
+This server is also listed on [Glama](https://glama.ai/mcp/servers/Atlasent/atlasent-mcp-server) (built from this repo's [`Dockerfile`](./Dockerfile); listing ownership in [`glama.json`](./glama.json)) and distributed via the [official MCP Registry](https://registry.modelcontextprotocol.io) (`io.github.Atlasent/mcp-server`, manifest at [`server.json`](./server.json)) and [Smithery](https://smithery.ai) (config at [`smithery.yaml`](./smithery.yaml)) — a registry-aware host can discover and install it without a hand-written config block.
 
 ## Development
 
 ```bash
 npm install
 npm run typecheck
-npm test
+npm test          # offline: no network, no API key
 npm run build
 npm run demo
 ```
 
-`npm test` includes regression tests proving that the protected deployment demo does not produce a native result when either the outer agent-tool Permit or the action-specific deployment Permit fails Verification.
+`npm test` runs entirely offline. Local-mode tests touch no network, and remote-mode tests mock `fetch`. It includes regression tests proving that the protected deployment demo produces no native result when either the outer agent-tool Permit or the action-specific deployment Permit fails Verification.
+
+Prefer a ready-made environment? Open the repo in a [dev container](./.devcontainer/devcontainer.json) (VS Code, or GitHub Codespaces), and it installs and builds on create.
+
+## Community
+
+- **Questions and ideas:** [GitHub Discussions](https://github.com/Atlasent/atlasent-mcp-server/discussions)
+- **Bugs and small features:** [open an issue](https://github.com/Atlasent/atlasent-mcp-server/issues/new/choose)
+- **Bigger changes** (new tools, wire-shape or fail-closed behavior): start with an [RFC issue](https://github.com/Atlasent/atlasent-mcp-server/issues/new?template=rfc.md)
+- **Want to contribute?** Read [CONTRIBUTING.md](./CONTRIBUTING.md) and look for [`good first issue`](https://github.com/Atlasent/atlasent-mcp-server/labels/good%20first%20issue)
+- **Security reports:** email security@atlasent.io. See [SECURITY.md](./SECURITY.md). Please don't open a public issue.
+
+Everyone taking part is expected to follow the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ## Security
 

@@ -1,0 +1,14 @@
+{
+  "name": "atlasent-mcp-server",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  "postCreateCommand": "npm ci && npm run build",
+  "containerEnv": {
+    "ATLASENT_MODE": "local",
+    "ATLASENT_SUPPRESS_LOCAL_MODE_WARNING": "true"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint"]
+    }
+  }
+}

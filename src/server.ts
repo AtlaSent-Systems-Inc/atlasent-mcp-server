@@ -45,7 +45,9 @@ import { CANON_ACTION_GRAPH } from "./canonGraph.js";
 import { NO_MATCH_HINT, rankActions, type RetrievalResult } from "./actionRetrieval.js";
 import { ATLAS_CONCEPTS, ATLAS_NODES, ATLAS_SOURCE } from "./atlasCatalog.js";
 
-export const VERSION = "2.11.0";
+import { VERSION } from "./version.js";
+
+export { VERSION };
 
 // Bounds protect the upstream policy engine and the local rule engine
 // from a misbehaving / adversarial caller (e.g. an injected prompt that
