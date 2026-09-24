@@ -7,7 +7,17 @@ MCP server that enforces authorize-before-execute for any MCP-compatible AI agen
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Glama MCP server](https://glama.ai/mcp/servers/Atlasent/atlasent-mcp-server/badge)](https://glama.ai/mcp/servers/Atlasent/atlasent-mcp-server)
 
-**Authorization for consequential AI-agent actions at the execution boundary.**
+**AtlaSent stops risky changes to production unless someone approved them, and gives you proof for your auditor.**
+
+This MCP server brings that to AI agents (Claude, Cursor, Windsurf, any MCP host):
+
+1. **Connect it** to your agent with a few lines of config.
+2. **Risky actions wait** for a person to approve them. Everything else runs as normal.
+3. **Every action gets a signed receipt** your auditor can check, without trusting us.
+
+Try it in 60 seconds with no account: `npx -y @atlasent/mcp-server` (local mode).
+
+### For engineers
 
 AtlaSent performs **execution-time authorization**: determine whether a specific consequential Action is authorized now, issue a bounded Permit on `allow`, verify that Permit at the execution Gate, and only then allow the governed native effect.
 
