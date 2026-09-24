@@ -68,6 +68,27 @@ jobs:
           fi
           echo "server.json and package.json agree on $PKG"
 
+      # The registry validates that the npm version exists, but npm takes a
+      # minute or so to serve a freshly published version. v2.12.2's first
+      # registry publish ran ~20s after npm accepted the tarball and was
+      # rejected ("version '2.12.2' was not found ... wait and retry"). Poll
+      # npm until the exact version resolves; fail closed after ~10 minutes.
+      - name: Wait for the npm version to be visible
+        run: |
+          PKG=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          URL="https://registry.npmjs.org/${PKG/\//%2f}/${VER}"
+          for i in $(seq 1 40); do
+            if curl -fsS -o /dev/null "$URL"; then
+              echo "npm serves ${PKG}@${VER}"
+              exit 0
+            fi
+            echo "npm does not serve ${PKG}@${VER} yet (attempt $i/40); waiting 15s"
+            sleep 15
+          done
+          echo "::error::${PKG}@${VER} is not on npm after 10 minutes; not registering it."
+          exit 1
+
       - name: Install mcp-publisher
         run: |
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
