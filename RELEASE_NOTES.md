@@ -1,5 +1,27 @@
 # Release Notes
 
+## v2.13.0 — 2026-09-24
+
+### Tools
+
+- **`atlasent_get_permit`** — fetch one permit's record (`GET /v1/permits/:id`):
+  status, actor, action, environment, issue/expiry/consume times and the
+  issuing `decision_id`.
+- **`atlasent_check_permit`** — `{ valid, status }` for a permit without
+  consuming it (`GET /v1/permits/:id/valid`). A status read before a deferred
+  action, **not** authorization: execute only after `atlasent_verify_permit`.
+- **`atlasent_get_decision`** — fetch one authorization decision
+  (`GET /v1/execution-evaluations/:id`, needs `audit:read`); `include_trace`
+  adds its approval events, permit uses and webhook deliveries.
+
+### Security
+
+- Permit tools (`atlasent_get_permit`, `atlasent_check_permit`,
+  `atlasent_list_permits`) never return a permit's `token` (its bearer
+  credential) or `signature`: both are stripped client-side, so an older or
+  misconfigured backend cannot leak them into an agent's context. The API
+  side stopped returning them in atlasent-api#3638.
+
 ## v2.12.2 — 2026-09-24
 
 Same code as `v2.12.1`, which was tagged but never reached npm (the publish

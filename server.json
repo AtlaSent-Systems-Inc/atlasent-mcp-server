@@ -3,7 +3,7 @@
   "name": "io.github.Atlasent/mcp-server",
   "title": "AtlaSent MCP Server",
   "description": "Authorize-before-execute for AI agents: evaluate an action, get a permit, verify it before running.",
-  "version": "2.12.2",
+  "version": "2.13.0",
   "websiteUrl": "https://github.com/Atlasent/atlasent-mcp-server",
   "repository": {
     "url": "https://github.com/Atlasent/atlasent-mcp-server",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "@atlasent/mcp-server",
-      "version": "2.12.2",
+      "version": "2.13.0",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "environmentVariables": [
