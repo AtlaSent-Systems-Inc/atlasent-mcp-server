@@ -84,12 +84,19 @@ jobs:
         # Keyless OIDC cert via Sigstore Fulcio — no private key in secrets.
         run: cosign sign-blob --yes --bundle="${PKG}.bundle" "${PKG}"
 
+      # npm trusted publishing (OIDC): npm authenticates this exact workflow
+      # via the job's id-token, so there is no long-lived NPM_TOKEN to expire,
+      # leak, or be mis-pasted. Configured on npmjs.com -> @atlasent/mcp-server
+      # -> Settings -> Trusted Publisher (repo Atlasent/atlasent-mcp-server,
+      # workflow publish.yml, environment npm). Requires npm >= 11.5.1; the
+      # Node 22 runner ships npm 10.x, hence the upgrade. The repo is public,
+      # so provenance (publishConfig.provenance) is attached as well, alongside
+      # the cosign bundle above.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@^11.5.1 && npm --version
+
       - name: Publish to npm
-        # --provenance requires a public source repo; this repo is private.
-        # cosign signing above covers supply-chain attestation.
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Upload cosign bundle artifact
         uses: actions/upload-artifact@v7

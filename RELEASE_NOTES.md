@@ -1,5 +1,13 @@
 # Release Notes
 
+## v2.12.2 — 2026-09-24
+
+Same code as `v2.12.1`, which was tagged but never reached npm (the publish
+step's `NPM_TOKEN` had lapsed). `v2.12.2` is the first release published via
+npm **trusted publishing** (OIDC): `publish.yml` no longer uses a stored npm
+token, and upgrades npm to >= 11.5.1, which trusted publishing requires.
+Everything listed under `v2.12.1` below ships in this version.
+
 ## v2.12.1 — 2026-09-23
 
 Everything that landed on `main` after the `v2.11.0` tag (`c3b2add`).
