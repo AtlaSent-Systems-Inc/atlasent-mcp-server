@@ -269,6 +269,20 @@ Output: the integrity report, verbatim
 
 Read `summary.audited_scope` before concluding anything from an empty `findings` list — a short decision window is not an absence of findings. If the audit cannot complete, the server refuses rather than returning a partial report, and this tool surfaces that as an error rather than an empty report.
 
+### `atlasent_get_permit` / `atlasent_check_permit` / `atlasent_get_decision`
+
+Read-only lookups of a single record. Hosted mode only.
+
+```text
+atlasent_get_permit    { permit_id }                     -> the permit record (status, actor, action, times, decision_id)
+atlasent_check_permit  { permit_id }                     -> { valid, status: active|revoked|consumed|expired, revoked_at? }
+atlasent_get_decision  { evaluation_id, include_trace? } -> { evaluation, trace?: { approvals, permit_uses, webhooks } }
+```
+
+`atlasent_check_permit` reads status without consuming the permit. Use it before a deferred action to catch a revocation, but it is **not** authorization: execute only after `atlasent_verify_permit`. `atlasent_get_decision` requires the `audit:read` scope; a permit's `decision_id` is the id to pass.
+
+Permit tools never return the permit's `token` (its bearer credential) or `signature`. Anything a tool returns lands in the agent's context and transcript, so both fields are stripped client-side as well as by the API.
+
 The server also exposes policy, permit, approval, evidence, compliance, and VQP tools. Use MCP `tools/list` for the exact tool inventory supported by the installed version.
 
 ## Approval workflow

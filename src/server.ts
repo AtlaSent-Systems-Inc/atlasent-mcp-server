@@ -29,6 +29,9 @@ import {
   deletePolicy,
   revokePermit,
   listPermits,
+  getPermit,
+  checkPermit,
+  getDecision,
   issuePermit,
   verifyPermitV1,
   createApprovalRequest,
@@ -1275,6 +1278,111 @@ export function createServer(): McpServer {
           cursor: args.cursor,
         });
         return toolResult(result as Record<string, unknown>);
+      } catch (e) {
+        return toolError(e);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_get_permit / atlasent_check_permit / atlasent_get_decision
+  // Read-only lookups of a single permit or decision. Permit responses never
+  // carry the bearer `token` or `signature` (see engine.redactPermitSecrets).
+  // -------------------------------------------------------------------------
+  const permitIdSchema = z
+    .string()
+    .min(1)
+    .max(MAX_FIELD_LEN)
+    .describe("Permit id (UUID) as returned by atlasent_list_permits.");
+
+  server.registerTool(
+    "atlasent_get_permit",
+    {
+      title: "AtlaSent — Get Permit",
+      description:
+        "Fetch one permit's record: status, actor, action, environment, issue/expiry/consume " +
+        "times and the decision that issued it. Never returns the permit token itself.",
+      inputSchema: z.object({ permit_id: permitIdSchema }),
+      annotations: {
+        title: "AtlaSent — Get Permit",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_get_permit")) {
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
+      }
+      try {
+        return toolResult((await getPermit(args.permit_id)) as Record<string, unknown>);
+      } catch (e) {
+        return toolError(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "atlasent_check_permit",
+    {
+      title: "AtlaSent — Check Permit",
+      description:
+        "Check whether a permit is still usable without consuming it. Returns " +
+        "{ valid, status } where status is active, revoked, consumed or expired. Use " +
+        "before a deferred action to avoid acting on a permit that was revoked meanwhile. " +
+        "This is a status read, not authorization: execute only after atlasent_verify_permit.",
+      inputSchema: z.object({ permit_id: permitIdSchema }),
+      annotations: {
+        title: "AtlaSent — Check Permit",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_check_permit")) {
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
+      }
+      try {
+        return toolResult((await checkPermit(args.permit_id)) as Record<string, unknown>);
+      } catch (e) {
+        return toolError(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "atlasent_get_decision",
+    {
+      title: "AtlaSent — Get Decision",
+      description:
+        "Fetch one authorization decision (execution evaluation) by id: the decision, " +
+        "deny code, actor, action, context and evidence fields. Set include_trace to also " +
+        "return its approval events, permit uses and webhook deliveries. Requires audit:read.",
+      inputSchema: z.object({
+        evaluation_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("Execution evaluation id (UUID), e.g. a permit's decision_id."),
+        include_trace: z
+          .boolean()
+          .optional()
+          .describe("Also return approval events, permit uses and webhook deliveries."),
+      }),
+      annotations: {
+        title: "AtlaSent — Get Decision",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_get_decision")) {
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
+      }
+      try {
+        return toolResult((await getDecision(args.evaluation_id, args.include_trace)) as Record<string, unknown>);
       } catch (e) {
         return toolError(e);
       }
