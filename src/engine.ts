@@ -756,7 +756,7 @@ export interface ListPermitsParams {
 }
 
 export async function listPermits(params: ListPermitsParams): Promise<unknown> {
-  return get("/v1/permits", {
+  return redactPermitSecrets(await get("/v1/permits", {
     org_id: params.org_id,
     status: params.status,
     actor_id: params.actor_id,
@@ -765,6 +765,46 @@ export async function listPermits(params: ListPermitsParams): Promise<unknown> {
     to: params.to,
     limit: params.limit !== undefined ? String(params.limit) : undefined,
     cursor: params.cursor,
+  }));
+}
+
+// A permit's `token` is its bearer credential and `signature` its signing
+// material. Neither belongs in an agent's context window: anything a tool
+// returns is visible to the model, its transcript and any logging around it,
+// and a token there can be presented as the permit. atlasent-api#3638 stops
+// v1-permits returning them; this strips them again client-side so an older
+// or misconfigured backend cannot leak them through these tools.
+export const PERMIT_SECRET_FIELDS = ["token", "signature"] as const;
+
+export function redactPermitSecrets<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((v) => redactPermitSecrets(v)) as unknown as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if ((PERMIT_SECRET_FIELDS as readonly string[]).includes(k)) continue;
+      out[k] = redactPermitSecrets(v);
+    }
+    return out as T;
+  }
+  return value;
+}
+
+export async function getPermit(permitId: string): Promise<unknown> {
+  return redactPermitSecrets(await get(`/v1/permits/${encodeURIComponent(permitId)}`));
+}
+
+// GET /v1/permits/:id/valid — the runtime's lightweight revocation heartbeat.
+// Answers 200 `{ valid, status: active|revoked|consumed|expired, revoked_at? }`
+// even for an expired permit, so a caller can tell expiry from revocation.
+export async function checkPermit(permitId: string): Promise<unknown> {
+  return redactPermitSecrets(await get(`/v1/permits/${encodeURIComponent(permitId)}/valid`));
+}
+
+// GET /v1/execution-evaluations/:id (scope audit:read). `include_trace` adds
+// the approval events, permit uses and webhook deliveries for the decision.
+export async function getDecision(evaluationId: string, includeTrace?: boolean): Promise<unknown> {
+  return get(`/v1/execution-evaluations/${encodeURIComponent(evaluationId)}`, {
+    include: includeTrace ? "trace" : undefined,
   });
 }
 

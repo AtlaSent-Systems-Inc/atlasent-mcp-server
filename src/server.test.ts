@@ -83,6 +83,7 @@ describe("tools/list", () => {
     const names = tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "atlasent_atlas_lookup",
+      "atlasent_check_permit",
       "atlasent_create_approval_request",
       "atlasent_create_evidence_export",
       "atlasent_create_policy",
@@ -95,7 +96,9 @@ describe("tools/list", () => {
       "atlasent_evaluate_many",
       "atlasent_evaluate_stream",
       "atlasent_explain_authority",
+      "atlasent_get_decision",
       "atlasent_get_evidence_export",
+      "atlasent_get_permit",
       "atlasent_get_policy",
       "atlasent_get_scim_user",
       "atlasent_get_siem_config",
@@ -1095,6 +1098,125 @@ describe("atlasent_list_permits", () => {
     });
     assert.equal(result.isError, true);
     assert.match(String(parseResult(result).error), /Rate limited/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// atlasent_get_permit / atlasent_check_permit / atlasent_get_decision
+// ---------------------------------------------------------------------------
+
+const SECRET_PERMIT = {
+  id: "11111111-1111-4111-8111-111111111111",
+  status: "issued",
+  decision_id: "22222222-2222-4222-8222-222222222222",
+  token: "pt.v4.SECRET-BEARER",
+  signature: "SECRET-SIG",
+};
+
+function assertNoPermitSecrets(value: unknown, where: string) {
+  const text = JSON.stringify(value);
+  assert.ok(!text.includes("SECRET-BEARER"), `${where} leaked the permit token: ${text}`);
+  assert.ok(!text.includes("SECRET-SIG"), `${where} leaked the permit signature: ${text}`);
+  assert.ok(!/"token"\s*:/.test(text), `${where} carries a token field: ${text}`);
+  assert.ok(!/"signature"\s*:/.test(text), `${where} carries a signature field: ${text}`);
+}
+
+describe("atlasent_get_permit", () => {
+  it("GETs /v1/permits/:id and strips token and signature even if the backend returns them", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch(SECRET_PERMIT);
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_get_permit",
+      arguments: { permit_id: SECRET_PERMIT.id },
+    });
+    assert.equal(result.isError, undefined);
+    const data = parseResult(result);
+    assert.equal(data.id, SECRET_PERMIT.id);
+    assert.equal(data.decision_id, SECRET_PERMIT.decision_id);
+    assertNoPermitSecrets(data, "atlasent_get_permit");
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].method, "GET");
+    assert.equal(new URL(captured[0].url).pathname, `/v1/permits/${SECRET_PERMIT.id}`);
+  });
+
+  it("URL-encodes the permit id so it cannot address another path", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch({ id: "x" });
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    await client.callTool({ name: "atlasent_get_permit", arguments: { permit_id: "../revoke" } });
+    assert.equal(new URL(captured[0].url).pathname, "/v1/permits/..%2Frevoke");
+  });
+
+  it("surfaces a 404 as an isError result", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ error: "not_found", message: "Permit not found" }, 404);
+    const { client } = await setup();
+    const result = await client.callTool({ name: "atlasent_get_permit", arguments: { permit_id: "nope" } });
+    assert.equal(result.isError, true);
+    assert.match(String(parseResult(result).error), /Permit not found/);
+  });
+});
+
+describe("atlasent_check_permit", () => {
+  it("GETs /v1/permits/:id/valid and returns the runtime's { valid, status }", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch({ valid: false, status: "revoked", revoked_at: "2026-09-24T00:00:00Z" });
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_check_permit",
+      arguments: { permit_id: SECRET_PERMIT.id },
+    });
+    const data = parseResult(result);
+    assert.equal(data.valid, false);
+    assert.equal(data.status, "revoked");
+    assert.equal(captured[0].method, "GET");
+    assert.equal(new URL(captured[0].url).pathname, `/v1/permits/${SECRET_PERMIT.id}/valid`);
+  });
+});
+
+describe("atlasent_get_decision", () => {
+  it("GETs /v1/execution-evaluations/:id without include when include_trace is unset", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch({ evaluation: { id: SECRET_PERMIT.decision_id, decision: "allow" } });
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    const result = await client.callTool({
+      name: "atlasent_get_decision",
+      arguments: { evaluation_id: SECRET_PERMIT.decision_id },
+    });
+    const data = parseResult(result);
+    assert.equal((data.evaluation as Record<string, unknown>).decision, "allow");
+    const u = new URL(captured[0].url);
+    assert.equal(u.pathname, `/v1/execution-evaluations/${SECRET_PERMIT.decision_id}`);
+    assert.equal(u.searchParams.has("include"), false);
+  });
+
+  it("passes include=trace when include_trace is true", async () => {
+    forceRemoteMode();
+    const { fn, captured } = captureFetch({ evaluation: { id: "e" }, trace: { approvals: [], permit_uses: [], webhooks: [] } });
+    globalThis.fetch = fn;
+    const { client } = await setup();
+    await client.callTool({
+      name: "atlasent_get_decision",
+      arguments: { evaluation_id: "e", include_trace: true },
+    });
+    assert.equal(new URL(captured[0].url).searchParams.get("include"), "trace");
+  });
+});
+
+describe("atlasent_list_permits secret redaction", () => {
+  it("strips token and signature from every listed permit", async () => {
+    forceRemoteMode();
+    globalThis.fetch = mockFetch({ permits: [SECRET_PERMIT, { ...SECRET_PERMIT, id: "p2" }], total: 2, next_cursor: null });
+    const { client } = await setup();
+    const result = await client.callTool({ name: "atlasent_list_permits", arguments: { org_id: "org_1" } });
+    const data = parseResult(result);
+    assert.equal((data.permits as unknown[]).length, 2);
+    assertNoPermitSecrets(data, "atlasent_list_permits");
   });
 });
 
