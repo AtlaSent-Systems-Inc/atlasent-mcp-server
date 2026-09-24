@@ -28,7 +28,8 @@ Same code as `v2.12.1`, which was tagged but never reached npm (the publish
 step's `NPM_TOKEN` had lapsed). `v2.12.2` is the first release published via
 npm **trusted publishing** (OIDC): `publish.yml` no longer uses a stored npm
 token, and upgrades npm to >= 11.5.1, which trusted publishing requires.
-Everything listed under `v2.12.1` below ships in this version.
+Everything listed under `v2.12.1` below ships in this version. It is also the
+first version listed on the official MCP Registry (`io.github.Atlasent/mcp-server`).
 
 ## v2.12.1 — 2026-09-23
 
