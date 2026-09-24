@@ -261,6 +261,18 @@ See `atlasent-api/docs/runbooks/CRON_VAULT_SECRETS.md` for the full setup proced
 
 Scoped package `@atlasent/mcp-server`, `publishConfig.access: public`. Tag `v*` triggers `publish.yml`, which runs an AtlaSent `package.release` gate, then build, tests, and `npm publish --access public` using the `NPM_TOKEN` repo secret. **Not `--provenance`** — provenance requires a public source repo, and this repo is private; a cosign keyless-signed tarball (uploaded as a build artifact) is the supply-chain attestation instead. **Correction (2026-08-30):** this section previously claimed no `v*` tag had ever been pushed and no version had ever been published — that was based on an incomplete local git clone (`git tag -l` empty), not the live registry. Verified directly against `registry.npmjs.org`: **`2.11.0` has been published to npm since 2026-06-09** (via a manual `workflow_dispatch` run, not a tag-triggered one), and the `v2.11.0` git tag has existed on GitHub since 2026-06-10 (`create-v2-11-0-tag.yml` run #1, which pinned it to a specific historical commit SHA rather than the HEAD at dispatch time). Before assuming a tag or version is missing, check the live registry/GitHub state directly rather than a local checkout's `git tag -l`, which may not have fetched tags. Submission to the **MCP Registry remains genuinely outstanding** — confirmed via a live query against `registry.modelcontextprotocol.io` returning zero results.
 
+### Trusted publishing replaces NPM_TOKEN (2026-09-24)
+
+The repo is now public, and `publish.yml` publishes via npm **trusted
+publishing** (OIDC): no stored npm token, `id-token: write` (already present
+for cosign), npm upgraded to >= 11.5.1 in the job, and provenance attached via
+`publishConfig.provenance`. The "Not `--provenance`" / `NPM_TOKEN` text above
+is historical. `v2.12.1` was tagged but never reached npm: the `npm`
+environment's `NPM_TOKEN` had lapsed (E404 on PUT), then a re-pasted token
+carried a newline ("is not a legal HTTP header value"). `v2.12.2` ships the
+same code. Re-running a tag's publish uses the workflow file AT THAT TAG, so a
+workflow fix always needs a new version.
+
 ### The `package.release` gate had no template for this repo until 2026-09-19
 
 Both `publish.yml` and `publish-mcp-registry.yml` call `package.release` against
