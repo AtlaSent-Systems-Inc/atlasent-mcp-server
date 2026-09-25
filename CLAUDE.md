@@ -210,6 +210,27 @@ Two callers were silently unbound as a result, both now fixed:
 The binding is additive: a caller that supplies no target sends a
 byte-identical request to before, pinned by a test.
 
+### Approval claim with the agent's own identity (IMPL-026B, 2026-09-25)
+
+When `atlasent_await_approval` polls a row in `approved_awaiting_claim`, the
+permit does not exist yet. The runtime mints it only on a claim that presents
+the action actor's `actor_identity.v1`. `awaitApproval` calls
+`mintAgentActorIdentity(action_type, environment)`, which POSTs to
+`/v1-agent-actor-identity` with the usual headers and a 10 s timeout. The
+action type and environment come from the approval row, never from the agent.
+The runtime signs `agent:<agent_identity_id>` with role `agent` only for an API
+key bound to a registered agent (CROSS-056). The server then claims with
+`{ actor_identity }`.
+
+- A failed mint (refusal, 5xx, network, malformed or mismatched assertion)
+  means no claim and no permit.
+- A 404 from the mint means an older runtime. The server claims with `{}` and
+  adds a `notes` entry; the runtime decides.
+- A plain `approved` row is claimed with `{}` exactly as before, and no mint
+  happens.
+- A 409 `claim_in_progress` re-polls, and the next attempt mints a fresh
+  identity.
+
 Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
 
 ## Disabled Endpoints (atlasent-api)

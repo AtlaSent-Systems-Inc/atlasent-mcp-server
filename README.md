@@ -310,6 +310,8 @@ Approval / Assertion collected
 
 Approvals are made by a person in the AtlaSent console, never by an agent: this server deliberately has no tool that creates or resolves an approval. When an action is held for a person, the result carries an `approval_request_id`; call `atlasent_await_approval` with it to wait while the person decides in the console. On approval it returns a permit that must still pass `atlasent_verify_permit`; a rejection, expiry or timeout returns no permit and the action does not run. (Remote mode only; local mode never approves.) The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
 
+For action classes that require a verified actor, the runtime resolves the approval to `approved_awaiting_claim` and mints the permit only when the claim presents the actor's identity. The server then asks the runtime for a short-lived `actor_identity.v1` for its own agent (`POST /v1-agent-actor-identity`, available only to an API key bound to a registered agent). The action type and environment come from the approval record, and the server claims with `{ actor_identity }`. If that identity cannot be obtained, nothing is claimed and no permit is returned. On a runtime without that endpoint (HTTP 404), the server claims with an empty body as before and adds a note to the result.
+
 ## Which agent, whose agent, which chat
 
 Every evaluate call reports **which app** it came from (the MCP client's name,

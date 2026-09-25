@@ -918,13 +918,79 @@ export interface AwaitApprovalParams {
 }
 
 export type AwaitApprovalResult =
-  | { outcome: "approved"; permit_token: string; approval_request_id: string }
+  | { outcome: "approved"; permit_token: string; approval_request_id: string; notes?: string[] }
   | {
       outcome: "not_approved" | "timeout";
       approval_request_id: string;
       status?: string;
+      re_evaluation_decision?: string;
       reasons: string[];
     };
+
+/** IMPL-026B: an approval for a verified-actor class is resolved to this
+ *  status; its permit exists only after a claim that presents the ACTION
+ *  actor's actor_identity triggers the claim-time re-evaluation. */
+export const APPROVED_AWAITING_CLAIM = "approved_awaiting_claim";
+
+// ---------------------------------------------------------------------------
+// Agent actor identity (key-bound agent; atlasent-api v1-agent-actor-identity)
+// ---------------------------------------------------------------------------
+//
+// An agent-bound API key can mint a short-lived actor_identity.v1 for ITS OWN
+// agent. The runtime derives the subject, role ("agent") and tenant from the
+// key; this client sends only the binding coordinates. The assertion is
+// opaque here: the runtime verifies the signature at claim time.
+
+export type AgentActorIdentityMint =
+  | { ok: true; actor_identity: Record<string, unknown> }
+  /** The runtime has no mint endpoint (HTTP 404): an older deployment. */
+  | { ok: false; unsupported: true; reason: string }
+  | { ok: false; unsupported: false; reason: string };
+
+export async function mintAgentActorIdentity(
+  action_type: string,
+  environment: string,
+): Promise<AgentActorIdentityMint> {
+  const fail = (reason: string): AgentActorIdentityMint => ({ ok: false, unsupported: false, reason });
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl()}/v1-agent-actor-identity`, {
+      method: "POST",
+      headers: buildHeaders(),
+      body: JSON.stringify({ action_type, environment }),
+      signal: makeAbortSignal(REQUEST_TIMEOUT_MS),
+    });
+  } catch (e) {
+    return fail(`network error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  let json: Record<string, unknown> | null = null;
+  try {
+    json = (await res.json()) as Record<string, unknown>;
+  } catch {
+    json = null;
+  }
+  if (res.status === 404) {
+    return { ok: false, unsupported: true, reason: "this AtlaSent runtime has no agent identity endpoint (HTTP 404)" };
+  }
+  if (res.status !== 200) {
+    const code = typeof json?.error === "string" ? json.error : `HTTP ${res.status}`;
+    return fail(code);
+  }
+  // Sanity only (the signature is checked server-side): refuse anything that
+  // is not an agent assertion for exactly the binding we asked for.
+  const a = json?.assertion as Record<string, unknown> | undefined;
+  const subject = a?.subject as Record<string, unknown> | undefined;
+  const binding = a?.binding as Record<string, unknown> | undefined;
+  if (
+    !a || typeof a !== "object" || a.version !== "actor_identity.v1" ||
+    subject?.principal_kind !== "agent" ||
+    binding?.action_type !== action_type || binding?.environment !== environment ||
+    typeof a.signature !== "string"
+  ) {
+    return fail("malformed actor identity response");
+  }
+  return { ok: true, actor_identity: a };
+}
 
 const APPROVAL_POLL_INTERVAL_MS = 5_000;
 
@@ -978,25 +1044,82 @@ export async function awaitApproval(params: AwaitApprovalParams): Promise<AwaitA
 
     const rowStatus = typeof polled.json?.status === "string" ? polled.json.status : undefined;
     if (polled.status === 200 && rowStatus && rowStatus !== "pending") {
-      if (rowStatus !== "approved") {
+      if (rowStatus !== "approved" && rowStatus !== APPROVED_AWAITING_CLAIM) {
         return notApproved([`A person did not approve this action (status: ${rowStatus}).`], rowStatus);
       }
-      // Approved: claim the permit exactly once. Anything but a genuine
-      // claim (lost race, re-evaluation minted nothing, error) is no permit.
+      // "approved": the permit was minted at resolve; claim it with an empty
+      // body exactly as before. "approved_awaiting_claim" (IMPL-026B): the
+      // permit is minted only by a claim that presents the action actor's
+      // actor_identity, so obtain a fresh one for THIS held action first.
+      // The binding comes from the server's own approval row, never from the
+      // agent. No identity -> no claim.
+      let claimBody: Record<string, unknown> = {};
+      const notes: string[] = [];
+      if (rowStatus === APPROVED_AWAITING_CLAIM) {
+        const actionType = typeof polled.json?.action_type === "string" ? polled.json.action_type : "";
+        const environment = typeof polled.json?.environment === "string" ? polled.json.environment : "";
+        if (!actionType) {
+          return notApproved(
+            ["Approved, but the approval record has no action_type to bind an agent identity to; the permit was not claimed."],
+            rowStatus,
+          );
+        }
+        const minted = await mintAgentActorIdentity(actionType, environment);
+        if (minted.ok) {
+          claimBody = { actor_identity: minted.actor_identity };
+        } else if (minted.unsupported) {
+          // Older runtime: claim as before and say so. The runtime decides;
+          // a claim that needed an identity is refused there, not here.
+          notes.push(`Claimed without an agent identity: ${minted.reason}.`);
+        } else {
+          return notApproved(
+            [`Approved, but an agent identity could not be obtained (${minted.reason}); the permit was not claimed.`],
+            rowStatus,
+          );
+        }
+      }
+      // Claim exactly once. Anything but a genuine claim (lost race,
+      // re-evaluation minted nothing, error) is no permit.
       let claimed: { status: number; json: Record<string, unknown> | null };
       try {
-        claimed = await rawRequest("POST", `/v1/approvals/${pathId}/claim-permit`, {});
+        claimed = await rawRequest("POST", `/v1/approvals/${pathId}/claim-permit`, claimBody);
       } catch {
         return notApproved(["Approved, but the permit could not be claimed (network error)."], rowStatus);
       }
       const token = claimed.json?.permit_token;
       if (claimed.status === 200 && claimed.json?.claimed === true && typeof token === "string" && token) {
-        return { outcome: "approved", permit_token: token, approval_request_id: id };
+        return {
+          outcome: "approved",
+          permit_token: token,
+          approval_request_id: id,
+          ...(notes.length > 0 && { notes }),
+        };
       }
-      return notApproved(
-        ["Approved, but no permit was available to claim (already claimed, or the re-check did not allow)."],
-        rowStatus,
-      );
+      if (claimed.status === 409 && rowStatus === APPROVED_AWAITING_CLAIM) {
+        // IMPL-026B claim_in_progress: another claim holds the lease. Wait
+        // and re-poll; the next pass mints a fresh identity.
+        await new Promise((r) => setTimeout(r, interval));
+        continue;
+      }
+      const reevalDecision = typeof claimed.json?.re_evaluation_decision === "string"
+        ? claimed.json.re_evaluation_decision
+        : undefined;
+      const code = typeof claimed.json?.deny_code === "string"
+        ? claimed.json.deny_code
+        : typeof claimed.json?.error === "string"
+        ? claimed.json.error
+        : undefined;
+      return {
+        ...notApproved(
+          [
+            "Approved, but no permit was available to claim (already claimed, or the re-check did not allow)." +
+              (code ? ` Runtime said: ${code}.` : ""),
+            ...notes,
+          ],
+          rowStatus,
+        ),
+        ...(reevalDecision && { re_evaluation_decision: reevalDecision }),
+      } as AwaitApprovalResult;
     }
     // pending, 5xx, rate limit or malformed: keep waiting until the deadline.
     await new Promise((r) => setTimeout(r, interval));
