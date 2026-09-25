@@ -32,6 +32,8 @@ import type { ActionContext, Decision, VerifyResult } from "./decision.js";
 import { denyDecision } from "./decision.js";
 import { authorizeLocal, verifyLocal } from "./localEngine.js";
 
+import { createHash } from "node:crypto";
+
 import { VERSION } from "./version.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -462,6 +464,249 @@ export function sanitizeAgentSession(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Change control: structured change plan + auto Change Brief (IMPL-026B)
+// ---------------------------------------------------------------------------
+//
+// For the four mandatory-change-control action types, /v1-evaluate requires a
+// top-level `change_plan` ({ operation, revision and/or artifact_ref }) and,
+// when a `change_brief_id` is also sent, requires the brief's stored
+// execution plan to equal it exactly (atlasent-api
+// _shared/mandatory-execution-binding.ts, v1-evaluate/handler.ts). A claim of
+// an approved_awaiting_claim approval may present the plan again; if it
+// differs from the recorded one the claim is refused with 409
+// change_plan_mismatch (v1-approvals/handler.ts handleClaimTimeClaim).
+//
+// So this client: (1) creates a Change Brief recording EXACTLY the plan it is
+// about to evaluate, (2) sends that plan and the brief id to evaluate, and
+// (3) remembers the plan per approval id so the later claim presents the SAME
+// plan. A mismatch then only happens when the agent's plan genuinely changed.
+
+/** Mirrors atlasent-api MANDATORY_CHANGE_CONTROL_ACTION_TYPES. */
+export const MANDATORY_CHANGE_CONTROL_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "production.deploy",
+  "infrastructure.change",
+  "production.rollback",
+  "secret.configuration.change",
+]);
+
+export interface ChangePlan {
+  operation: string;
+  revision?: string;
+  artifact_ref?: string;
+}
+
+/**
+ * Validate and normalise a caller's change plan to the wire form v1-evaluate
+ * binds (trimmed; empty optional fields omitted). Throws on anything else:
+ * sending a plan the runtime would refuse is strictly worse than refusing
+ * here. Accepts only the three plan fields — nothing is inferred.
+ */
+export function normalizeChangePlan(value: unknown): ChangePlan {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("change_plan must be an object { operation, revision?, artifact_ref? }");
+  }
+  const v = value as Record<string, unknown>;
+  const extra = Object.keys(v).filter((k) => !["operation", "revision", "artifact_ref"].includes(k));
+  if (extra.length > 0) throw new Error(`change_plan carries fields that are not part of a plan: ${extra.join(", ")}`);
+  for (const f of ["operation", "revision", "artifact_ref"]) {
+    if (v[f] !== undefined && typeof v[f] !== "string") throw new Error(`change_plan.${f} must be a string`);
+  }
+  const operation = typeof v.operation === "string" ? v.operation.trim() : "";
+  const revision = typeof v.revision === "string" ? v.revision.trim() : "";
+  const artifact_ref = typeof v.artifact_ref === "string" ? v.artifact_ref.trim() : "";
+  if (!operation || (!revision && !artifact_ref)) {
+    throw new Error("change_plan needs a non-empty operation and a revision or artifact_ref");
+  }
+  return { operation, ...(revision && { revision }), ...(artifact_ref && { artifact_ref }) };
+}
+
+function sameChangePlan(a: ChangePlan, b: ChangePlan): boolean {
+  return a.operation === b.operation &&
+    (a.revision ?? null) === (b.revision ?? null) &&
+    (a.artifact_ref ?? null) === (b.artifact_ref ?? null);
+}
+
+function describeChangePlan(p: ChangePlan): string {
+  return [p.operation, p.revision && `revision ${p.revision}`, p.artifact_ref && `artifact ${p.artifact_ref}`]
+    .filter(Boolean)
+    .join(", ");
+}
+
+/**
+ * The digest v1-change-brief requires (`sha256:<64 lowercase hex>`). It is
+ * this client's own commitment to the plan and its binding coordinates;
+ * v1-evaluate compares it only against the brief it came from.
+ */
+function changeBriefPlanDigest(input: {
+  action_type: string;
+  target_id: string;
+  environment: string;
+  change_plan: ChangePlan;
+}): string {
+  const canonical = JSON.stringify({
+    action_type: input.action_type,
+    target_id: input.target_id,
+    environment: input.environment,
+    operation: input.change_plan.operation,
+    revision: input.change_plan.revision ?? null,
+    artifact_ref: input.change_plan.artifact_ref ?? null,
+  });
+  return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
+}
+
+export interface ChangeBriefInput {
+  action_type: string;
+  actor_id?: string;
+  target_id?: string;
+  environment?: string;
+  target_system?: string;
+  change_plan: ChangePlan;
+}
+
+/** Placeholder used when the caller names no target system. Descriptive only. */
+export const UNSPECIFIED_TARGET_SYSTEM = "unspecified";
+
+/**
+ * POST /v1-change-brief recording exactly `change_plan` as the brief's
+ * execution plan. Returns the brief id, or a note when the brief cannot or
+ * need not be created:
+ *   - 404 (older runtime) or 403 (key lacks change_brief:read) → note, proceed
+ *   - the brief's required binding fields are unknown here (actor_id,
+ *     target_id, environment) → note, proceed: the brief must equal the
+ *     evaluate request on those fields, and none is ever guessed
+ * Every other failure (network, 5xx, 401, malformed body) THROWS: the caller
+ * then does not evaluate (fail closed).
+ */
+export async function createChangeBriefForPlan(
+  input: ChangeBriefInput,
+): Promise<{ change_brief_id?: string; notes: string[] }> {
+  const missing = (["actor_id", "target_id", "environment"] as const).filter((k) => !input[k]);
+  if (missing.length > 0) {
+    return {
+      notes: [
+        `No Change Brief was created: ${missing.join(", ")} not known to this server, and a brief must match ` +
+          "the evaluate request on those fields. Evaluated with the change_plan alone.",
+      ],
+    };
+  }
+  const body = {
+    action_type: input.action_type,
+    target_system: input.target_system || UNSPECIFIED_TARGET_SYSTEM,
+    target_id: input.target_id,
+    environment: input.environment,
+    actor_id: input.actor_id,
+    canonical_plan_digest: changeBriefPlanDigest({
+      action_type: input.action_type,
+      target_id: input.target_id!,
+      environment: input.environment!,
+      change_plan: input.change_plan,
+    }),
+    execution_change_plan: input.change_plan,
+  };
+  const res = await fetch(`${baseUrl()}/v1-change-brief`, {
+    method: "POST",
+    headers: buildHeaders(),
+    body: JSON.stringify(body),
+    signal: makeAbortSignal(REQUEST_TIMEOUT_MS),
+  });
+  let json: Record<string, unknown> | null = null;
+  try {
+    json = (await res.json()) as Record<string, unknown>;
+  } catch {
+    json = null;
+  }
+  if (res.status === 404) {
+    return { notes: ["No Change Brief was created: this AtlaSent runtime has no v1-change-brief endpoint (HTTP 404)."] };
+  }
+  if (res.status === 403) {
+    return { notes: ["No Change Brief was created: the API key lacks change_brief:read (HTTP 403)."] };
+  }
+  if (res.status !== 200 && res.status !== 201) {
+    const code = typeof json?.error === "string" ? json.error : `HTTP ${res.status}`;
+    throw new Error(`Change Brief creation failed (${code}); the action was not evaluated.`);
+  }
+  const id = json?.change_brief_id;
+  if (typeof id !== "string" || !id) {
+    throw new Error("Change Brief creation returned no change_brief_id; the action was not evaluated.");
+  }
+  return { change_brief_id: id, notes: [] };
+}
+
+/** What a held request needs so its claim presents the same plan, and so a
+ *  plan change can be re-requested as a linked request. Process-local. */
+interface PendingChangeRequest {
+  /** The evaluate body as sent, minus change_plan / change_brief_id / supersedes_approval_id. */
+  evaluate_body: Record<string, unknown>;
+  change_plan: ChangePlan;
+  brief: Omit<ChangeBriefInput, "change_plan">;
+}
+
+const MAX_PENDING_CHANGE_REQUESTS = 256;
+const pendingChangeRequests = new Map<string, PendingChangeRequest>();
+
+function rememberPendingChangeRequest(approvalId: string, entry: PendingChangeRequest): void {
+  pendingChangeRequests.delete(approvalId);
+  pendingChangeRequests.set(approvalId, entry);
+  while (pendingChangeRequests.size > MAX_PENDING_CHANGE_REQUESTS) {
+    const oldest = pendingChangeRequests.keys().next().value;
+    if (oldest === undefined) break;
+    pendingChangeRequests.delete(oldest);
+  }
+}
+
+/** The plan this server evaluated for a held approval, if it did. */
+export function pendingChangePlanFor(approvalId: string): ChangePlan | undefined {
+  return pendingChangeRequests.get(approvalId)?.change_plan;
+}
+
+export function _resetPendingChangeRequestsForTests(): void {
+  pendingChangeRequests.clear();
+}
+
+/**
+ * Attach the change plan (and, for a mandatory-change-control action, an
+ * auto-created Change Brief recording exactly that plan) to an evaluate body.
+ * Returns the notes to surface and a registration callback for a hold.
+ * Throws (fail closed) on an invalid plan or a brief failure other than
+ * 404/403.
+ */
+async function attachChangeControl(
+  body: Record<string, unknown>,
+  input: {
+    action_type: string;
+    actor_id?: string;
+    target_id?: string;
+    environment?: string;
+    target_system?: string;
+    change_plan?: unknown;
+  },
+): Promise<{ notes: string[]; remember: (approvalId: string | undefined) => void }> {
+  const none = { notes: [], remember: () => {} };
+  if (input.change_plan === undefined) return none;
+  const plan = normalizeChangePlan(input.change_plan);
+  const baseBody = { ...body };
+  body.change_plan = plan;
+  if (!MANDATORY_CHANGE_CONTROL_ACTION_TYPES.has(input.action_type)) return none;
+  const briefInput = {
+    action_type: input.action_type,
+    ...(input.actor_id && { actor_id: input.actor_id }),
+    ...(input.target_id && { target_id: input.target_id }),
+    ...(input.environment && { environment: input.environment }),
+    ...(input.target_system && { target_system: input.target_system }),
+  };
+  const brief = await createChangeBriefForPlan({ ...briefInput, change_plan: plan });
+  if (brief.change_brief_id) body.change_brief_id = brief.change_brief_id;
+  return {
+    notes: brief.notes,
+    remember: (approvalId) => {
+      if (approvalId) {
+        rememberPendingChangeRequest(approvalId, { evaluate_body: baseBody, change_plan: plan, brief: briefInput });
+      }
+    },
+  };
+}
+
 interface EvaluateRequestBodyInput {
   action_type: string;
   /** Omit when the API key belongs to a registered agent: the runtime derives it. */
@@ -518,7 +763,21 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     ...(ctx.target_id !== undefined ? { target_id: ctx.target_id } : {}),
   });
 
+  // Mandatory-change-control actions: top-level change_plan plus an
+  // auto-created Change Brief recording exactly that plan. Throws (→ deny via
+  // authorize()) on an invalid plan or a brief failure other than 404/403.
+  const changeControl = await attachChangeControl(body, {
+    action_type: ctx.action_type,
+    actor_id: ctx.actor_id,
+    target_id: ctx.target_id,
+    environment: ctx.environment,
+    target_system: ctx.target_system,
+    change_plan: ctx.change_plan,
+  });
+
   const data = await post<RawEvaluate>("/v1-evaluate", body);
+  if (data.decision === "hold" || data.decision === "escalate") changeControl.remember(data.approval_request_id);
+  const notes = changeControl.notes;
 
   // Normalise request_id → audit_id (canonical API contract uses request_id).
   const audit_id = data.request_id;
@@ -530,6 +789,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     if (audit_id) out.audit_id = audit_id;
     if (envelope_hash) out.envelope_hash = envelope_hash;
     if (data.conditions?.length) out.conditions = data.conditions;
+    if (notes.length) out.notes = notes;
     return out;
   }
 
@@ -548,6 +808,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
       ...(data.approval_request_id && { approval_request_id: data.approval_request_id }),
       ...(audit_id && { audit_id }),
       ...(envelope_hash && { envelope_hash }),
+      ...(notes.length && { notes }),
     };
   }
 
@@ -570,6 +831,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     ...(deny_code === "INSUFFICIENT_APPROVALS" && { requires_human_approval: true }),
     ...(audit_id && { audit_id }),
     ...(envelope_hash && { envelope_hash }),
+    ...(notes.length && { notes }),
   };
   return out;
 }
@@ -662,6 +924,9 @@ export interface EvaluateParams {
   state_snapshot?: Record<string, unknown>;
   execution_payload_hash?: string;
   target_id?: string;
+  /** See ActionContext.change_plan. */
+  change_plan?: ChangePlan;
+  target_system?: string;
 }
 
 // EvaluateResponse is the RAW /v1-evaluate response returned verbatim by the
@@ -691,7 +956,22 @@ export async function evaluateAction(params: EvaluateParams): Promise<EvaluateRe
       : {}),
     ...(params.target_id !== undefined ? { target_id: params.target_id } : {}),
   });
-  return post<EvaluateResponse>("/v1-evaluate", body);
+  const env = params.context?.environment;
+  const changeControl = await attachChangeControl(body, {
+    action_type: params.action_type,
+    actor_id: params.actor_id,
+    target_id: params.target_id,
+    environment: typeof env === "string" ? env : undefined,
+    target_system: params.target_system,
+    change_plan: params.change_plan,
+  });
+  const res = await post<EvaluateResponse>("/v1-evaluate", body);
+  if (res.decision === "hold" || res.decision === "escalate") changeControl.remember(res.approval_request_id);
+  if (changeControl.notes.length) {
+    const prior = Array.isArray(res.notes) ? (res.notes as unknown[]) : [];
+    return { ...res, notes: [...prior, ...changeControl.notes] };
+  }
+  return res;
 }
 
 export interface ListPoliciesParams {
@@ -915,16 +1195,61 @@ export interface AwaitApprovalParams {
   max_wait_ms: number;
   /** Poll interval; tests shorten it. */
   poll_interval_ms?: number;
+  /**
+   * The agent's CURRENT change plan, presented at claim. Defaults to the plan
+   * this server evaluated for the held request, so an unchanged plan never
+   * mismatches. Only mandatory-change-control actions carry one.
+   */
+  change_plan?: ChangePlan;
+  /**
+   * What to do when the claim reports change_plan_mismatch (the presented
+   * plan differs from the approved one):
+   *  - "rerequest" (default): file ONE linked re-request for the presented
+   *    plan (supersedes_approval_id = this approval) and wait on it.
+   *  - "use_approved": claim again without a plan so the APPROVED plan runs,
+   *    and return that plan so the agent executes exactly it.
+   */
+  on_plan_mismatch?: "rerequest" | "use_approved";
+}
+
+/** What a refused plan variance looked like, as the runtime reported it. */
+export interface PlanMismatchReport {
+  approval_request_id: string;
+  from?: ChangePlan;
+  to?: ChangePlan;
+  diff?: unknown;
+  variance_class?: string;
+  mismatch_count?: number;
+  recorded_change_plan_hash?: string;
+  presented_change_plan_hash?: string;
+  reconciliation?: unknown;
 }
 
 export type AwaitApprovalResult =
-  | { outcome: "approved"; permit_token: string; approval_request_id: string; notes?: string[] }
+  | {
+      outcome: "approved";
+      permit_token: string;
+      /** The approval (or re-request) whose permit this is. */
+      approval_request_id: string;
+      notes?: string[];
+      /** The plan the permit is bound to. Execute exactly this plan. */
+      approved_plan?: ChangePlan;
+      /** Set when a plan change moved the wait to a linked re-request. */
+      original_approval_request_id?: string;
+      /** One line per step, e.g. plan changed → re-request sent → waiting → approved. */
+      progression?: string[];
+      plan_mismatch?: PlanMismatchReport;
+    }
   | {
       outcome: "not_approved" | "timeout";
       approval_request_id: string;
       status?: string;
       re_evaluation_decision?: string;
       reasons: string[];
+      notes?: string[];
+      original_approval_request_id?: string;
+      progression?: string[];
+      plan_mismatch?: PlanMismatchReport;
     };
 
 /** IMPL-026B: an approval for a verified-actor class is resolved to this
@@ -1014,25 +1339,92 @@ async function rawRequest(
   return { status: res.status, json };
 }
 
+/** Runtime refusals that mean the presented plan is not the approved one. */
+const PLAN_MISMATCH = "change_plan_mismatch";
+const PLAN_REVOKED = "approval_revoked_suspicious_plan_variance";
+
+/**
+ * The approved (recorded) plan, rebuilt from the plan we presented and the
+ * runtime's field-level diff ({ field, recorded, presented }). Undefined when
+ * the diff is not usable: then the approved plan is unknown and nothing is
+ * claimed on its behalf.
+ */
+function recordedPlanFromDiff(presented: ChangePlan | undefined, diff: unknown): ChangePlan | undefined {
+  if (!presented || !Array.isArray(diff) || diff.length === 0) return undefined;
+  const out: Record<string, unknown> = { ...presented };
+  for (const d of diff) {
+    if (!d || typeof d !== "object") return undefined;
+    const { field, recorded, presented: was } = d as Record<string, unknown>;
+    if (field !== "operation" && field !== "revision" && field !== "artifact_ref") return undefined;
+    // The diff must describe the plan we actually presented.
+    if ((presented[field] ?? null) !== (was ?? null)) return undefined;
+    if (recorded === null || recorded === undefined) delete out[field];
+    else if (typeof recorded === "string") out[field] = recorded;
+    else return undefined;
+  }
+  try {
+    return normalizeChangePlan(out);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Runtime policy flags (advisory): absent means true. The 409 body wins over the status row. */
+function policyFlag(
+  name: "auto_rerequest_on_mismatch" | "auto_change_brief",
+  ...sources: Array<Record<string, unknown> | null | undefined>
+): boolean {
+  for (const src of sources) {
+    const v = src?.[name];
+    if (typeof v === "boolean") return v;
+  }
+  return true;
+}
+
 export async function awaitApproval(params: AwaitApprovalParams): Promise<AwaitApprovalResult> {
-  const id = params.approval_request_id;
-  const pathId = encodeURIComponent(id);
+  const originalId = params.approval_request_id;
+  let id = originalId;
   const interval = params.poll_interval_ms ?? APPROVAL_POLL_INTERVAL_MS;
   const deadline = Date.now() + params.max_wait_ms;
+  const onMismatch = params.on_plan_mismatch ?? "rerequest";
+  const progression: string[] = [];
+  const notes: string[] = [];
+  let planMismatch: PlanMismatchReport | undefined;
+  // At most ONE automatic re-request per call, and at most one fall-back to
+  // the approved plan. Both are latched: a second mismatch stops.
+  let rerequested = false;
+  let approvedPlanFallback: ChangePlan | undefined;
+
+  const trail = () => ({
+    ...(id !== originalId && { original_approval_request_id: originalId }),
+    ...(progression.length > 0 && { progression: [...progression] }),
+    ...(planMismatch && { plan_mismatch: planMismatch }),
+  });
   const notApproved = (reasons: string[], status?: string): AwaitApprovalResult => ({
     outcome: "not_approved",
     approval_request_id: id,
     ...(status && { status }),
     reasons,
+    ...(notes.length > 0 && { notes: [...notes] }),
+    ...trail(),
   });
+  const sleep = () => new Promise((r) => setTimeout(r, interval));
+
+  let presented: ChangePlan | undefined;
+  try {
+    presented = params.change_plan !== undefined ? normalizeChangePlan(params.change_plan) : pendingChangePlanFor(id);
+  } catch (e) {
+    return notApproved([`The presented change_plan is not valid (${e instanceof Error ? e.message : String(e)}); nothing was claimed.`]);
+  }
 
   while (Date.now() < deadline) {
+    const pathId = encodeURIComponent(id);
     let polled: { status: number; json: Record<string, unknown> | null };
     try {
       polled = await rawRequest("GET", `/v1/approvals/${pathId}`);
     } catch {
       // Transient network failure: retry within the bounded window.
-      await new Promise((r) => setTimeout(r, interval));
+      await sleep();
       continue;
     }
     if (polled.status === 401 || polled.status === 403) {
@@ -1054,9 +1446,9 @@ export async function awaitApproval(params: AwaitApprovalParams): Promise<AwaitA
       // The binding comes from the server's own approval row, never from the
       // agent. No identity -> no claim.
       let claimBody: Record<string, unknown> = {};
-      const notes: string[] = [];
+      let claimNote: string | undefined;
+      const actionType = typeof polled.json?.action_type === "string" ? polled.json.action_type : "";
       if (rowStatus === APPROVED_AWAITING_CLAIM) {
-        const actionType = typeof polled.json?.action_type === "string" ? polled.json.action_type : "";
         const environment = typeof polled.json?.environment === "string" ? polled.json.environment : "";
         if (!actionType) {
           return notApproved(
@@ -1067,10 +1459,16 @@ export async function awaitApproval(params: AwaitApprovalParams): Promise<AwaitA
         const minted = await mintAgentActorIdentity(actionType, environment);
         if (minted.ok) {
           claimBody = { actor_identity: minted.actor_identity };
+          // Present the plan so the runtime can refuse a changed one before
+          // anything is evaluated (it always EXECUTES the recorded plan). Not
+          // after falling back to the approved plan: that claim omits it.
+          if (presented && !approvedPlanFallback && MANDATORY_CHANGE_CONTROL_ACTION_TYPES.has(actionType)) {
+            claimBody.change_plan = presented;
+          }
         } else if (minted.unsupported) {
           // Older runtime: claim as before and say so. The runtime decides;
           // a claim that needed an identity is refused there, not here.
-          notes.push(`Claimed without an agent identity: ${minted.reason}.`);
+          claimNote = `Claimed without an agent identity: ${minted.reason}.`;
         } else {
           return notApproved(
             [`Approved, but an agent identity could not be obtained (${minted.reason}); the permit was not claimed.`],
@@ -1078,7 +1476,7 @@ export async function awaitApproval(params: AwaitApprovalParams): Promise<AwaitA
           );
         }
       }
-      // Claim exactly once. Anything but a genuine claim (lost race,
+      // Claim exactly once per pass. Anything but a genuine claim (lost race,
       // re-evaluation minted nothing, error) is no permit.
       let claimed: { status: number; json: Record<string, unknown> | null };
       try {
@@ -1088,33 +1486,178 @@ export async function awaitApproval(params: AwaitApprovalParams): Promise<AwaitA
       }
       const token = claimed.json?.permit_token;
       if (claimed.status === 200 && claimed.json?.claimed === true && typeof token === "string" && token) {
+        const approvedPlan = approvedPlanFallback ?? (claimBody.change_plan ? presented : undefined);
+        if (progression.length > 0) progression.push(`approved; permit claimed for approval ${id}`);
+        const allNotes = [...notes, ...(claimNote ? [claimNote] : [])];
         return {
           outcome: "approved",
           permit_token: token,
           approval_request_id: id,
-          ...(notes.length > 0 && { notes }),
+          ...(allNotes.length > 0 && { notes: allNotes }),
+          ...(approvedPlan && { approved_plan: approvedPlan }),
+          ...trail(),
         };
       }
-      if (claimed.status === 409 && rowStatus === APPROVED_AWAITING_CLAIM) {
-        // IMPL-026B claim_in_progress: another claim holds the lease. Wait
-        // and re-poll; the next pass mints a fresh identity.
-        await new Promise((r) => setTimeout(r, interval));
-        continue;
-      }
-      const reevalDecision = typeof claimed.json?.re_evaluation_decision === "string"
-        ? claimed.json.re_evaluation_decision
-        : undefined;
       const code = typeof claimed.json?.deny_code === "string"
         ? claimed.json.deny_code
         : typeof claimed.json?.error === "string"
         ? claimed.json.error
+        : undefined;
+
+      // ── IMPL-026B decision 5: the presented plan is not the approved one ──
+      if (claimed.status === 409 && (code === PLAN_MISMATCH || code === PLAN_REVOKED)) {
+        const j = claimed.json ?? {};
+        const recorded = recordedPlanFromDiff(presented, j.diff);
+        planMismatch = {
+          approval_request_id: id,
+          ...(recorded && { from: recorded }),
+          ...(presented && { to: presented }),
+          ...(j.diff !== undefined && { diff: j.diff }),
+          ...(typeof j.variance_class === "string" && { variance_class: j.variance_class }),
+          ...(typeof j.mismatch_count === "number" && { mismatch_count: j.mismatch_count }),
+          ...(typeof j.recorded_change_plan_hash === "string" && { recorded_change_plan_hash: j.recorded_change_plan_hash }),
+          ...(typeof j.presented_change_plan_hash === "string" && { presented_change_plan_hash: j.presented_change_plan_hash }),
+          ...(j.reconciliation !== undefined && { reconciliation: j.reconciliation }),
+        };
+        const change = `plan changed from ${recorded ? describeChangePlan(recorded) : "the approved plan"} to ${presented ? describeChangePlan(presented) : "the presented plan"}`;
+        const revoked = code === PLAN_REVOKED || j.approval_status === "revoked" || j.variance_class === "suspicious";
+        if (revoked) {
+          progression.push(`${change} → approval ${id} revoked as suspicious`);
+          return notApproved(
+            [
+              `The presented change plan differs from the approved one and the runtime REVOKED approval ${id} ` +
+                `as a suspicious plan variance (${code}). No permit; nothing was re-requested. A person must review.`,
+            ],
+            "revoked",
+          );
+        }
+        if (onMismatch === "use_approved") {
+          if (approvedPlanFallback || !recorded) {
+            progression.push(`${change} → the approved plan could not be used`);
+            return notApproved(
+              [
+                recorded
+                  ? "The plan still did not match after falling back to the approved plan; stopping."
+                  : "The approved plan could not be determined from the runtime's diff, so it was not claimed on the agent's behalf.",
+              ],
+              rowStatus,
+            );
+          }
+          approvedPlanFallback = recorded;
+          progression.push(`${change} → using the approved plan (${describeChangePlan(recorded)})`);
+          continue; // re-poll, then claim WITHOUT a plan: the recorded plan runs.
+        }
+        if (rerequested) {
+          progression.push(`${change} → second plan mismatch; no further re-request`);
+          return notApproved(
+            [
+              "The plan changed again after the automatic re-request. Only one automatic re-request is made per call; " +
+                "no permit. Re-evaluate with the plan you intend to run.",
+            ],
+            rowStatus,
+          );
+        }
+        if (!policyFlag("auto_rerequest_on_mismatch", j, polled.json)) {
+          progression.push(`${change} → automatic re-request disabled by policy`);
+          return notApproved(
+            [
+              "The presented change plan differs from the approved one, and this organization's policy turns off the " +
+                "automatic re-request (auto_rerequest_on_mismatch=false). Either wait again with " +
+                "on_plan_mismatch=\"use_approved\" to run the approved plan, or re-evaluate the new plan with " +
+                `supersedes_approval_id=${id} so a person can approve it.`,
+            ],
+            rowStatus,
+          );
+        }
+        const pending = pendingChangeRequests.get(id);
+        if (!pending || !presented) {
+          progression.push(`${change} → cannot re-request from this server`);
+          return notApproved(
+            [
+              "The presented change plan differs from the approved one, but this server did not evaluate the original " +
+                "request, so it cannot file a linked re-request. Re-evaluate the new plan with " +
+                `supersedes_approval_id=${id}, or wait again with on_plan_mismatch="use_approved".`,
+            ],
+            rowStatus,
+          );
+        }
+
+        // ONE linked re-request: same request, the agent's current plan, a
+        // fresh brief recording it, and the link to the prior approval.
+        rerequested = true;
+        const body: Record<string, unknown> = { ...pending.evaluate_body, change_plan: presented };
+        if (MANDATORY_CHANGE_CONTROL_ACTION_TYPES.has(actionType) && policyFlag("auto_change_brief", j, polled.json)) {
+          try {
+            const brief = await createChangeBriefForPlan({ ...pending.brief, change_plan: presented });
+            if (brief.change_brief_id) body.change_brief_id = brief.change_brief_id;
+            notes.push(...brief.notes);
+          } catch (e) {
+            progression.push(`${change} → re-request not sent (Change Brief failed)`);
+            return notApproved([e instanceof Error ? e.message : String(e)], rowStatus);
+          }
+        }
+        body.supersedes_approval_id = id;
+        let evaluated: { status: number; json: Record<string, unknown> | null };
+        try {
+          evaluated = await rawRequest("POST", "/v1-evaluate", body);
+        } catch {
+          progression.push(`${change} → re-request failed (network error)`);
+          return notApproved(["The automatic re-request could not be sent (network error); no permit."], rowStatus);
+        }
+        const ev = evaluated.json ?? {};
+        const decision = typeof ev.decision === "string" ? ev.decision : "";
+        const link = ev.supersedes_approval as Record<string, unknown> | undefined;
+        if (link && link.accepted === false) {
+          notes.push(`The re-request was not linked to approval ${id}: ${String(link.reason ?? "no reason given")}.`);
+        }
+        if (evaluated.status !== 200) {
+          progression.push(`${change} → re-request refused (HTTP ${evaluated.status})`);
+          return notApproved([`The automatic re-request was refused (HTTP ${evaluated.status}); no permit.`], rowStatus);
+        }
+        if (decision === "allow") {
+          const permit = ev.permit_token;
+          if (typeof permit !== "string" || !permit) {
+            progression.push(`${change} → re-request allowed but returned no permit`);
+            return notApproved(["The re-request was allowed but returned no permit_token; no permit."], rowStatus);
+          }
+          progression.push(`${change} → re-request allowed without a new approval`);
+          return {
+            outcome: "approved",
+            permit_token: permit,
+            approval_request_id: id,
+            ...(notes.length > 0 && { notes: [...notes] }),
+            approved_plan: presented,
+            ...trail(),
+          };
+        }
+        const newId = typeof ev.approval_request_id === "string" ? ev.approval_request_id : "";
+        if ((decision === "hold" || decision === "escalate") && newId) {
+          rememberPendingChangeRequest(newId, { ...pending, change_plan: presented });
+          progression.push(`${change} → re-request sent (approval ${newId}) → waiting`);
+          id = newId;
+          continue; // poll the new approval right away; pending → the normal interval.
+        }
+        const reason = typeof ev.deny_reason === "string" ? ev.deny_reason : typeof ev.deny_code === "string" ? ev.deny_code : `decision=${decision || "none"}`;
+        progression.push(`${change} → re-request not approved (${decision || "no decision"})`);
+        return notApproved([`The automatic re-request was not allowed (${reason}); no permit.`], rowStatus);
+      }
+
+      if (claimed.status === 409 && rowStatus === APPROVED_AWAITING_CLAIM) {
+        // IMPL-026B claim_in_progress (and other transient lease conflicts):
+        // another claim holds the lease. Wait and re-poll; the next pass
+        // mints a fresh identity. Bounded by the deadline.
+        await sleep();
+        continue;
+      }
+      const reevalDecision = typeof claimed.json?.re_evaluation_decision === "string"
+        ? claimed.json.re_evaluation_decision
         : undefined;
       return {
         ...notApproved(
           [
             "Approved, but no permit was available to claim (already claimed, or the re-check did not allow)." +
               (code ? ` Runtime said: ${code}.` : ""),
-            ...notes,
+            ...(claimNote ? [claimNote] : []),
           ],
           rowStatus,
         ),
@@ -1122,13 +1665,15 @@ export async function awaitApproval(params: AwaitApprovalParams): Promise<AwaitA
       } as AwaitApprovalResult;
     }
     // pending, 5xx, rate limit or malformed: keep waiting until the deadline.
-    await new Promise((r) => setTimeout(r, interval));
+    await sleep();
   }
 
   return {
     outcome: "timeout",
     approval_request_id: id,
     reasons: ["No decision from a person within the wait time. The action must not run."],
+    ...(notes.length > 0 && { notes: [...notes] }),
+    ...trail(),
   };
 }
 

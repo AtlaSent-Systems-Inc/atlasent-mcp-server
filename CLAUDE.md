@@ -231,6 +231,33 @@ key bound to a registered agent (CROSS-056). The server then claims with
 - A 409 `claim_in_progress` re-polls, and the next attempt mints a fresh
   identity.
 
+### Change plans, auto Change Brief, plan-mismatch recovery (IMPL-026B decision 5, 2026-09-25)
+
+For the four mandatory-change-control action types, every evaluate path here
+(`deploy_service`, `evaluate`, `atlasent_evaluate`; `agentToolGate` evaluates
+`agent.tool.invoke` and is unaffected) takes a `change_plan`.
+`attachChangeControl` (`src/engine.ts`) creates a brief with
+`POST /v1-change-brief` whose `execution_change_plan` is exactly that plan. It
+then sends `change_plan` and `change_brief_id` top-level to `/v1-evaluate`, and
+remembers the plan per held `approval_request_id` (in process memory, capped
+at 256). The claim presents that same plan, so the runtime answers 409
+`change_plan_mismatch` only on a real change.
+
+- Brief 404 or 403, or an unknown actor_id, target_id or environment (the
+  brief must match the evaluate request on these): no brief, a `notes` entry,
+  and the evaluation goes ahead. Any other brief failure throws, so there is
+  no evaluation and no permit.
+- On a mismatch, `awaitApproval` files at most ONE linked re-request per call:
+  the same evaluate body, the presented plan, a new brief, and
+  `supersedes_approval_id`. It then waits on the new approval id. A second
+  mismatch, a revoked or suspicious approval, `auto_rerequest_on_mismatch:
+  false`, or a request this process did not evaluate stops the wait with no
+  permit and returns the diff. Absent runtime flags default to true.
+- `on_plan_mismatch: "use_approved"` claims again without `change_plan` and
+  returns the approved plan, rebuilt from the runtime's diff, as
+  `approved_plan`. If the diff cannot be read, nothing is claimed.
+- Tests: `src/planMismatch.test.ts`.
+
 Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
 
 ## Disabled Endpoints (atlasent-api)

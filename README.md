@@ -201,8 +201,8 @@ A wrapper, decorator, prompt, or MCP tool definition is not automatically a non-
 Simple local/remote authorization helper for MCP hosts.
 
 ```text
-Input:  { action_type, actor_id, environment, approvals?, change_window? }
-Output: { decision: "allow" | "deny" | "hold", permit_token?, ... }
+Input:  { action_type, actor_id, environment, approvals?, change_window?, target_id?, change_plan?, target_system? }
+Output: { decision: "allow" | "deny" | "hold", permit_token?, notes?, ... }
 ```
 
 On `allow`, **do not execute yet**. Present the Permit to `verify_permit` at the execution boundary first.
@@ -309,6 +309,8 @@ Approval / Assertion collected
 ```
 
 Approvals are made by a person in the AtlaSent console, never by an agent: this server deliberately has no tool that creates or resolves an approval. When an action is held for a person, the result carries an `approval_request_id`; call `atlasent_await_approval` with it to wait while the person decides in the console. On approval it returns a permit that must still pass `atlasent_verify_permit`; a rejection, expiry or timeout returns no permit and the action does not run. (Remote mode only; local mode never approves.) The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
+
+**Change plans and plan changes.** `production.deploy`, `infrastructure.change`, `production.rollback` and `secret.configuration.change` need a `change_plan` (`{ operation, revision?, artifact_ref? }`, with a revision and/or artifact ref). Pass it to `deploy_service`, `evaluate` or `atlasent_evaluate`. The server first creates a Change Brief recording exactly that plan, then evaluates with the brief id and the same plan. When the key cannot create briefs (HTTP 403) or the runtime has none (HTTP 404), the server evaluates with the plan alone and adds a `notes` entry. Any other brief failure blocks the evaluation. On claim, the server presents the same plan again, so a mismatch means the plan really changed. If your plan changed while you waited, pass the new plan to `atlasent_await_approval` as `change_plan`. By default the server files **one** linked re-request for the new plan (`supersedes_approval_id` set to the old approval), then waits for a person to decide it. The result shows the steps in `summary`, for example "plan changed from X to Y → re-request sent (approval …) → waiting → approved". With `on_plan_mismatch: "use_approved"`, the server claims the approved plan and returns it as `approved_plan`; run exactly that plan. A second mismatch, a revoked or suspicious approval, or an organization policy with `auto_rerequest_on_mismatch: false` stops the wait with no permit. The result includes the diff and what to do next.
 
 For action classes that require a verified actor, the runtime resolves the approval to `approved_awaiting_claim` and mints the permit only when the claim presents the actor's identity. The server then asks the runtime for a short-lived `actor_identity.v1` for its own agent (`POST /v1-agent-actor-identity`, available only to an API key bound to a registered agent). The action type and environment come from the approval record, and the server claims with `{ actor_identity }`. If that identity cannot be obtained, nothing is claimed and no permit is returned. On a runtime without that endpoint (HTTP 404), the server claims with an empty body as before and adds a note to the result.
 

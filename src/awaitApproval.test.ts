@@ -136,7 +136,11 @@ describe("atlasent_await_approval tool", () => {
     const t = tools.find((x) => x.name === "atlasent_await_approval");
     assert.ok(t, "tool registered");
     const props = Object.keys((t!.inputSchema as { properties?: object }).properties ?? {}).sort();
-    assert.deepEqual(props, ["approval_request_id", "max_wait_seconds"]);
+    // change_plan is only a declaration (the runtime executes the APPROVED
+    // plan) and on_plan_mismatch picks between two non-approving recoveries.
+    assert.deepEqual(props, ["approval_request_id", "change_plan", "max_wait_seconds", "on_plan_mismatch"]);
+    const mode = (t!.inputSchema as { properties: Record<string, { enum?: string[] }> }).properties.on_plan_mismatch;
+    assert.deepEqual(mode.enum, ["rerequest", "use_approved"]);
   });
 
   it("never approves in local mode", async () => {

@@ -101,6 +101,25 @@ const payloadHash = z
   .max(MAX_FIELD_LEN)
   .optional()
   .describe("Hash of the exact executed payload (tool-call arguments / artifact digest). Bind it at evaluate via execution_payload_hash; presenting a different hash at verify yields PAYLOAD_MISMATCH.");
+const changePlan = z
+  .object({
+    operation: z.string().min(1).max(MAX_FIELD_LEN).describe("What kind of change (e.g. deploy, rollback, apply)."),
+    revision: z.string().min(1).max(MAX_FIELD_LEN).optional().describe("Source/config revision that will run (e.g. a git SHA)."),
+    artifact_ref: z.string().min(1).max(MAX_FIELD_LEN).optional().describe("Built artifact that will run (e.g. an image digest)."),
+  })
+  .strict()
+  .optional()
+  .describe(
+    "The exact change you will run. Required by AtlaSent for production.deploy, infrastructure.change, " +
+      "production.rollback and secret.configuration.change: operation plus a revision and/or artifact_ref. " +
+      "A Change Brief recording it is created automatically, and the same plan is presented when an approval is claimed.",
+  );
+const targetSystem = z
+  .string()
+  .min(1)
+  .max(MAX_FIELD_LEN)
+  .optional()
+  .describe("System the target lives in (e.g. kubernetes, github). Shown in the auto-created Change Brief.");
 
 // Fields we'll keep verbatim in the structured stderr log. Anything
 // not on the allowlist is either dropped (sensitive) or hashed-and-
@@ -389,6 +408,9 @@ export function createServer(): McpServer {
         environment,
         approvals,
         change_window: changeWindow,
+        target_id: targetId,
+        change_plan: changePlan,
+        target_system: targetSystem,
       }),
       annotations: {
         title: "AtlaSent — Evaluate Action",
@@ -412,6 +434,9 @@ export function createServer(): McpServer {
         environment: args.environment,
         ...(args.approvals ? { approvals: args.approvals } : {}),
         ...(args.change_window ? { change_window: args.change_window } : {}),
+        ...(args.target_id ? { target_id: args.target_id } : {}),
+        ...(args.change_plan ? { change_plan: args.change_plan } : {}),
+        ...(args.target_system ? { target_system: args.target_system } : {}),
         agent_session: reportedSessionFor(server),
       };
       const decision = await authorize(ctx);
@@ -509,6 +534,8 @@ export function createServer(): McpServer {
         actor_id: actorId,
         approvals,
         change_window: changeWindow,
+        change_plan: changePlan,
+        target_system: targetSystem,
       }),
       annotations: {
         title: "Deploy Service",
@@ -544,6 +571,10 @@ export function createServer(): McpServer {
         target_id: args.service_name,
         ...(args.approvals ? { approvals: args.approvals } : {}),
         ...(args.change_window ? { change_window: args.change_window } : {}),
+        // production.deploy is a mandatory-change-control action: the plan
+        // goes to evaluate top-level with an auto-created Change Brief.
+        ...(args.change_plan ? { change_plan: args.change_plan } : {}),
+        ...(args.target_system ? { target_system: args.target_system } : {}),
         agent_session: reportedSessionFor(server),
       };
 
@@ -620,6 +651,8 @@ export function createServer(): McpServer {
           .describe("When true, populates risk_envelope.factors with a per-factor score breakdown"),
         execution_payload_hash: payloadHash,
         target_id: targetId,
+        change_plan: changePlan,
+        target_system: targetSystem,
       }),
       annotations: {
         title: "AtlaSent — Evaluate (Remote API)",
@@ -646,6 +679,8 @@ export function createServer(): McpServer {
             ? { execution_payload_hash: args.execution_payload_hash }
             : {}),
           ...(args.target_id !== undefined ? { target_id: args.target_id } : {}),
+          ...(args.change_plan !== undefined ? { change_plan: args.change_plan } : {}),
+          ...(args.target_system !== undefined ? { target_system: args.target_system } : {}),
         });
         log("atlasent_evaluate", { result });
         return toolResult(result);
@@ -1584,6 +1619,17 @@ export function createServer(): McpServer {
           .max(900)
           .optional()
           .describe("How long to wait for a decision (default 120, max 900)."),
+        change_plan: changePlan.describe(
+          "Your CURRENT change plan, if it changed since the action was evaluated. Omit it to present the plan " +
+            "this server evaluated. It is only a declaration: the approved plan is what runs unless a person approves the new one.",
+        ),
+        on_plan_mismatch: z
+          .enum(["rerequest", "use_approved"])
+          .optional()
+          .describe(
+            "If your plan differs from the approved one: 'rerequest' (default) files ONE linked re-request for your " +
+              "plan and keeps waiting; 'use_approved' claims the approved plan instead and returns it so you run exactly that.",
+          ),
       }),
       annotations: {
         title: "AtlaSent — Wait for Human Approval",
@@ -1607,14 +1653,21 @@ export function createServer(): McpServer {
         const result = await awaitApproval({
           approval_request_id: args.approval_request_id,
           max_wait_ms: (args.max_wait_seconds ?? 120) * 1000,
+          ...(args.change_plan ? { change_plan: args.change_plan } : {}),
+          ...(args.on_plan_mismatch ? { on_plan_mismatch: args.on_plan_mismatch } : {}),
         });
+        const summary = result.progression?.length ? { summary: result.progression.join(" → ") } : {};
+        log("atlasent_await_approval", { outcome: result.outcome, approval_request_id: result.approval_request_id, ...summary });
         if (result.outcome === "approved") {
           return toolResult({
             ...result,
-            next_step: "Call atlasent_verify_permit with this permit_token before running the action.",
+            ...summary,
+            next_step:
+              "Call atlasent_verify_permit with this permit_token before running the action" +
+              (result.approved_plan ? ", and run exactly approved_plan." : "."),
           });
         }
-        return toolResult(result);
+        return toolResult({ ...result, ...summary });
       } catch (e) {
         return toolError(e);
       }
