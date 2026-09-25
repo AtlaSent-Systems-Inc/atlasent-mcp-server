@@ -22,6 +22,63 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  # @atlasent/mcp-gate is a separate package with its own Node floor (>=22, so it
+  # cannot ride the 18/20/22 matrix above) and zero npm dependencies, so there is
+  # nothing to install.
+  #
+  # The unit tests alone are not the proof that matters. This package's whole claim
+  # is "every tool call is blocked until you write a rule", so the job also runs the
+  # real setup and drives an actual destructive tools/call through the gate,
+  # asserting it comes back blocked. A green unit suite over a gate that had silently
+  # stopped blocking would be exactly the shape of failure this repo keeps finding
+  # elsewhere.
+  mcp-gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/mcp-gate
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Unit tests
+        run: node --test test/*.node.mjs
+
+      - name: Setup generates a deny-by-default policy
+        run: |
+          set -euo pipefail
+          node cli.mjs setup "$RUNNER_TEMP/gate" -- node "$PWD/demo-server.mjs"
+          echo "--- generated policy.json ---"
+          cat "$RUNNER_TEMP/gate/policy.json"
+          node -e '
+            const p = require("fs").readFileSync(process.env.RUNNER_TEMP + "/gate/policy.json", "utf8");
+            const j = JSON.parse(p);
+            if (j.default !== "deny") { console.error("policy default is not deny:", j.default); process.exit(1); }
+            if (!Array.isArray(j.rules) || j.rules.length !== 0) { console.error("policy did not start with zero rules"); process.exit(1); }
+          '
+
+      - name: A destructive tool call is actually blocked
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_status","arguments":{"environment":"production","status":"deleted"}}}' \
+            | timeout 30 node cli.mjs run-dir "$RUNNER_TEMP/gate/policy.json" "$RUNNER_TEMP/gate/activity" \
+                -- node "$PWD/demo-server.mjs" > out.jsonl
+          echo "--- gate output ---"; cat out.jsonl
+          grep '"id":2' out.jsonl | grep -q 'Blocked by AtlaSent Gate' \
+            || { echo "::error::the gate did NOT block a destructive call"; exit 1; }
+
+      - name: Activity evidence stays metadata-only
+        run: |
+          set -euo pipefail
+          cat "$RUNNER_TEMP"/gate/activity/*.jsonl
+          if grep -qE 'set_status|production|deleted' "$RUNNER_TEMP"/gate/activity/*.jsonl; then
+            echo "::error::activity file leaked a tool name or arguments; it must be metadata-only"
+            exit 1
+          fi
+
   # The Dockerfile is what Glama (glama.ai/mcp/servers) builds to start the
   # server and introspect its tools. Keep it building and answering
   # tools/list with no credentials, so the listing never goes stale.

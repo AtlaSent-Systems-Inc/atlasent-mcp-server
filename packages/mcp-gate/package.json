@@ -1,0 +1,29 @@
+{
+  "name": "@atlasent/mcp-gate",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local, fail-closed MCP stdio gate with metadata-only activity evidence. Blocks every tool call until you write a rule. No account, no network, no dependencies.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agent",
+    "guardrail",
+    "circuit-breaker",
+    "authorization",
+    "fail-closed",
+    "security"
+  ],
+  "bin": { "atlasent-gate": "./cli.mjs" },
+  "scripts": { "test": "node --test test/*.node.mjs" },
+  "engines": { "node": ">=22" },
+  "files": ["*.mjs", "*.json", "*.md"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Atlasent/atlasent-mcp-server.git",
+    "directory": "packages/mcp-gate"
+  },
+  "homepage": "https://github.com/Atlasent/atlasent-mcp-server/tree/main/packages/mcp-gate#readme",
+  "bugs": { "url": "https://github.com/Atlasent/atlasent-mcp-server/issues" },
+  "publishConfig": { "access": "public" }
+}

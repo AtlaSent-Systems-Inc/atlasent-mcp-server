@@ -15,6 +15,31 @@ AtlaSent performs **execution-time authorization**: determine whether a specific
 
 This MCP server exposes AtlaSent authorization primitives to Model Context Protocol hosts and includes a protected deployment demo that proves the ordering end to end.
 
+## Which authority decided?
+
+This repository ships **two packages**, and one of them has two modes. All three block
+tool calls. Only one of the three is evidence, and the difference is not a feature list —
+it is *who said yes*.
+
+| Surface | Who decided | What it is |
+|---|---|---|
+| `@atlasent/mcp-server` **local mode** | a built-in heuristic | **nothing** — a credential-free demo. Its terminal rule is `allow`, including for action types it does not recognise. Never rely on it as protection. |
+| [`@atlasent/mcp-gate`](./packages/mcp-gate) + `policy.json` | **you**, in advance, in a file you can edit | **operator configuration.** Starts at `{"default":"deny","rules":[]}` and blocks everything until you write a rule. Runs with no account and no network. |
+| `@atlasent/mcp-gate` **cloud mode** | **your organization**, at execution time | an **organizational permit** — single-use, bound to that call, verifiable afterwards. |
+
+A rule you can silently edit is configuration. A permit your organization issued, that was
+consumed once and can be produced later, is authority. Both stop the call; only the second
+answers *"who authorized this?"* — which is the question that arrives after an incident,
+not before one.
+
+The gate says which one decided, on every decision: `no_matching_rule` is your local
+policy, `cloud_permit_consumed` is an organizational permit. **These reason strings are
+deliberately not normalised into a generic "blocked."** Do not collapse them.
+
+The two packages point in opposite directions, which is why they are separate:
+`mcp-server` exposes AtlaSent *as* MCP tools an agent calls to ask for authorization;
+`mcp-gate` sits *in front of* someone else's MCP server and intercepts.
+
 ## The invariant
 
 For an enforced protected path:
