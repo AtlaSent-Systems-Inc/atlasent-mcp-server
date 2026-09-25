@@ -12,6 +12,13 @@
   unclaimable or refused all return no permit. The tool has no decision input
   and cannot approve. Needs `approvals:read` on the key.
 
+- **Reported session on every evaluate** (CROSS-056 §2b): `agent_session`
+  carries the MCP client's name and the chat/session id (`ATLASENT_SESSION_ID`,
+  `ATLASENT_RUN_ID`, or the Streamable HTTP session; a generated
+  `mcp-process-…` id otherwise). Top-level, never inside `context`.
+- **`atlasent_evaluate` `actor_id` is optional.** Leave it empty with an agent
+  API key; the runtime derives the agent and its owner from the key.
+
 ### Security
 
 - **Removed `atlasent_create_approval_request` and

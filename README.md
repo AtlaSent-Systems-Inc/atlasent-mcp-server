@@ -310,6 +310,21 @@ Approval / Assertion collected
 
 Approvals are made by a person in the AtlaSent console, never by an agent: this server deliberately has no tool that creates or resolves an approval. When an action is held for a person, the result carries an `approval_request_id`; call `atlasent_await_approval` with it to wait while the person decides in the console. On approval it returns a permit that must still pass `atlasent_verify_permit`; a rejection, expiry or timeout returns no permit and the action does not run. (Remote mode only; local mode never approves.) The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
 
+## Which agent, whose agent, which chat
+
+Every evaluate call reports **which app** it came from (the MCP client's name,
+e.g. `claude-code` or `cursor`) and **which chat or session** as
+`agent_session`. AtlaSent stores this labelled *reported by the agent host*:
+useful for tracing an action back to the conversation that caused it, never
+used to decide anything.
+
+- Session id: the Streamable HTTP session, else `ATLASENT_SESSION_ID` if your
+  host sets it, else a per-process id prefixed `mcp-process-`.
+- Optional `ATLASENT_RUN_ID` for a run or job id.
+- With an **agent API key**, leave `actor_id` empty: AtlaSent identifies the
+  agent and the person it acts for from the key itself, so the model never
+  names itself.
+
 ## Execution evidence
 
 `atlasent_record_execution_evaluation` records an observed execution outcome after the native effect. That evidence function does **not** replace pre-execution Permit Verification.

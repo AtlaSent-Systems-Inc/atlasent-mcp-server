@@ -428,9 +428,39 @@ function applyTargetBinding(
   return { ...(context ?? {}), target_id: targetId, target };
 }
 
+/**
+ * Where an agent action came from, as REPORTED by the agent host (CROSS-056
+ * §2b): which app (host) and which chat/session. The runtime stores it
+ * labelled "reported" and never uses it in a decision, permit or audit hash.
+ * It exists so a person can trace an action back to the conversation that
+ * produced it.
+ */
+export interface ReportedAgentSession {
+  host?: string;
+  session_id?: string;
+  run_id?: string;
+}
+
+const MAX_SESSION_FIELD_LEN = 200;
+
+/** Keep only non-empty string fields, trimmed and capped. Undefined if empty. */
+export function sanitizeAgentSession(
+  s: ReportedAgentSession | undefined,
+): ReportedAgentSession | undefined {
+  if (!s) return undefined;
+  const out: ReportedAgentSession = {};
+  for (const key of ["host", "session_id", "run_id"] as const) {
+    const v = s[key];
+    if (typeof v === "string" && v.trim()) out[key] = v.trim().slice(0, MAX_SESSION_FIELD_LEN);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 interface EvaluateRequestBodyInput {
   action_type: string;
-  actor_id: string;
+  /** Omit when the API key belongs to a registered agent: the runtime derives it. */
+  actor_id?: string;
+  agent_session?: ReportedAgentSession;
   context?: Record<string, unknown>;
   explain?: boolean;
   state_snapshot?: Record<string, unknown>;
@@ -439,10 +469,10 @@ interface EvaluateRequestBodyInput {
 }
 
 function buildEvaluateRequestBody(input: EvaluateRequestBodyInput): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    action_type: input.action_type,
-    actor_id: input.actor_id,
-  };
+  const body: Record<string, unknown> = { action_type: input.action_type };
+  if (input.actor_id) body.actor_id = input.actor_id;
+  const session = sanitizeAgentSession(input.agent_session);
+  if (session) body.agent_session = session;
   // Must run BEFORE context is attached: it sets `resource_id` top-level and
   // returns the context to use, which may be created here when the caller
   // passed none. See applyTargetBinding.
@@ -469,6 +499,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   const body = buildEvaluateRequestBody({
     action_type: ctx.action_type,
     actor_id: ctx.actor_id,
+    agent_session: ctx.agent_session,
     context,
     state_snapshot: ctx.state_snapshot,
     // Bind the digest here, not only at verify. Presenting payload_hash at the
@@ -615,7 +646,9 @@ export interface RiskEnvelope {
 }
 
 export interface EvaluateParams {
-  actor_id: string;
+  /** Optional: with an agent-bound key the runtime identifies the agent. */
+  actor_id?: string;
+  agent_session?: ReportedAgentSession;
   action_type: string;
   context?: Record<string, unknown>;
   explain?: boolean;
@@ -642,6 +675,7 @@ export async function evaluateAction(params: EvaluateParams): Promise<EvaluateRe
   const body = buildEvaluateRequestBody({
     action_type: params.action_type,
     actor_id: params.actor_id,
+    agent_session: params.agent_session,
     context: params.context,
     explain: params.explain,
     state_snapshot: params.state_snapshot,

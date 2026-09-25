@@ -38,7 +38,9 @@ import {
   createWebhook,
   deleteWebhook,
   awaitApproval,
+  type ReportedAgentSession,
 } from "./engine.js";
+import { randomUUID } from "node:crypto";
 import { registerV2Tools } from "./v2Tools.js";
 import { registerComplianceTools } from "./complianceTools.js";
 import { registerVqpTools } from "./vqpTools.js";
@@ -209,11 +211,31 @@ function verificationFailureDecision(
 // Authorization primitives (evaluate, verify_permit) are intentionally
 // excluded — they must always be callable to bootstrap the flow.
 // ---------------------------------------------------------------------------
+// One id per server process for hosts that give no session id (stdio). Marked
+// as generated so nobody mistakes it for the host's own chat id.
+const PROCESS_SESSION_ID = `mcp-process-${randomUUID()}`;
+
+/**
+ * Which app and which chat/session this call came from, as REPORTED by the
+ * agent host (CROSS-056 §2b). Never authority: the runtime stores it
+ * labelled "reported". Host = the MCP client's own name (e.g. "claude-code",
+ * "cursor"). Session = the Streamable HTTP session id, else
+ * ATLASENT_SESSION_ID set by the host, else a per-process generated id.
+ */
+export function reportedSessionFor(server: McpServer): ReportedAgentSession {
+  const host = server.server.getClientVersion()?.name;
+  const transportSession = server.server.transport?.sessionId;
+  const session_id = transportSession || process.env.ATLASENT_SESSION_ID || PROCESS_SESSION_ID;
+  const run_id = process.env.ATLASENT_RUN_ID;
+  return { ...(host && { host }), session_id, ...(run_id && { run_id }) };
+}
+
 async function agentToolGate(
   toolName: string,
   actorId: string,
   environment: string,
   approvals?: string[],
+  agentSession?: ReportedAgentSession,
 ): Promise<Decision | null> {
   // Forward the call's approvals into the gate context. Without this, a
   // production tool call is denied at the agent gate for "no approvals" even
@@ -231,6 +253,7 @@ async function agentToolGate(
     // permit minted to invoke one tool verifies for any other.
     target_id: toolName,
     ...(approvals && approvals.length ? { approvals } : {}),
+    ...(agentSession && { agent_session: agentSession }),
   };
   const gate = await authorize(ctx);
   if (gate.decision !== "allow") {
@@ -384,6 +407,7 @@ export function createServer(): McpServer {
         environment: args.environment,
         ...(args.approvals ? { approvals: args.approvals } : {}),
         ...(args.change_window ? { change_window: args.change_window } : {}),
+        agent_session: reportedSessionFor(server),
       };
       const decision = await authorize(ctx);
       log("evaluate", { ctx, decision });
@@ -500,7 +524,7 @@ export function createServer(): McpServer {
 
       // Outer Gate: agent.tool.invoke is authorized and its Permit is
       // verified inside agentToolGate before this handler can continue.
-      const agentGate = await agentToolGate("deploy_service", args.actor_id, args.environment, args.approvals);
+      const agentGate = await agentToolGate("deploy_service", args.actor_id, args.environment, args.approvals, reportedSessionFor(server));
       if (agentGate !== null) return toolResult(agentGate);
 
       const ctx: ActionContext = {
@@ -515,6 +539,7 @@ export function createServer(): McpServer {
         target_id: args.service_name,
         ...(args.approvals ? { approvals: args.approvals } : {}),
         ...(args.change_window ? { change_window: args.change_window } : {}),
+        agent_session: reportedSessionFor(server),
       };
 
       const decision = await authorize(ctx);
@@ -569,9 +594,12 @@ export function createServer(): McpServer {
       inputSchema: z.object({
         actor_id: z
           .string()
-          .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("The actor performing the action (e.g. 'user:alice', 'service:deploy-bot')."),
+          .optional()
+          .describe(
+            "Leave empty when using an agent API key: AtlaSent identifies the agent and its owner " +
+              "from the key. Only set this for a non-agent key (e.g. 'service:deploy-bot').",
+          ),
         action_type: z
           .string()
           .min(1)
@@ -604,7 +632,8 @@ export function createServer(): McpServer {
       }
       try {
         const result = await evaluateAction({
-          actor_id: args.actor_id,
+          ...(args.actor_id ? { actor_id: args.actor_id } : {}),
+          agent_session: reportedSessionFor(server),
           action_type: args.action_type,
           context: args.context,
           ...(args.explain !== undefined ? { explain: args.explain } : {}),

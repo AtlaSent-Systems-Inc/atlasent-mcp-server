@@ -26,6 +26,8 @@ export type ActionContext = {
    * tool call fail closed rather than silently execute.
    */
   payload_hash?: string;
+  /** Host-reported app + chat/session; see ReportedAgentSession in engine.ts. */
+  agent_session?: { host?: string; session_id?: string; run_id?: string };
 };
 
 export type AllowDecision = {
