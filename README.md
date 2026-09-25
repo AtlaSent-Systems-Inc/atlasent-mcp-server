@@ -308,7 +308,7 @@ Approval / Assertion collected
   → native effect
 ```
 
-Use `atlasent_create_approval_request` and `atlasent_resolve_approval_request` to manage approval inputs. The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
+Approvals are made by a person in the AtlaSent console, never by an agent: this server deliberately has no tool that creates or resolves an approval. When an action needs approval, the evaluate result says so (`requires_human_approval`) and the action does not run. The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
 
 ## Execution evidence
 

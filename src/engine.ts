@@ -523,9 +523,9 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
     reasons,
     ...(deny_code && { deny_code }),
     // An insufficient-approvals denial is not a terminal refusal — a human can
-    // approve. Flag it so the host routes to a person (e.g.
-    // create_approval_request) instead of giving up. The action still does not
-    // run now (fail-closed preserved). INSUFFICIENT_APPROVALS is the frozen
+    // approve (in the AtlaSent console; an agent never approves its own
+    // action). Flag it so the host routes to a person instead of giving up.
+    // The action still does not run now (fail-closed preserved). INSUFFICIENT_APPROVALS is the frozen
     // deny code the per-class human-in-the-loop gate emits.
     ...(deny_code === "INSUFFICIENT_APPROVALS" && { requires_human_approval: true }),
     ...(audit_id && { audit_id }),
@@ -849,56 +849,6 @@ export async function verifyPermitV1(params: VerifyPermitV1Params): Promise<unkn
   if (params.action !== undefined) body.action = params.action;
   if (params.resource !== undefined) body.resource = params.resource;
   return post("/v1/permits/verify", body);
-}
-
-// ---------------------------------------------------------------------------
-// Approval requests
-// ---------------------------------------------------------------------------
-
-export interface CreateApprovalRequestParams {
-  subject: string;
-  action: string;
-  resource: string;
-  org_id: string;
-  justification?: string;
-  context?: Record<string, unknown>;
-}
-
-export async function createApprovalRequest(
-  params: CreateApprovalRequestParams,
-): Promise<unknown> {
-  const body: Record<string, unknown> = {
-    subject: params.subject,
-    action: params.action,
-    resource: params.resource,
-    org_id: params.org_id,
-  };
-  if (params.justification !== undefined) body.justification = params.justification;
-  if (params.context !== undefined) body.context = params.context;
-  return post("/v1/approval-requests", body);
-}
-
-export interface ResolveApprovalRequestParams {
-  approval_request_id: string;
-  org_id: string;
-  resolution: "approve" | "deny";
-  resolver_id: string;
-  comment?: string;
-}
-
-export async function resolveApprovalRequest(
-  params: ResolveApprovalRequestParams,
-): Promise<unknown> {
-  const body: Record<string, unknown> = {
-    org_id: params.org_id,
-    resolution: params.resolution,
-    resolver_id: params.resolver_id,
-  };
-  if (params.comment !== undefined) body.comment = params.comment;
-  return post(
-    `/v1/approval-requests/${encodeURIComponent(params.approval_request_id)}/resolve`,
-    body,
-  );
 }
 
 // ---------------------------------------------------------------------------

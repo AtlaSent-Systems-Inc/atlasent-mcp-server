@@ -1,5 +1,19 @@
 # Release Notes
 
+## Unreleased
+
+### Security
+
+- **Removed `atlasent_create_approval_request` and
+  `atlasent_resolve_approval_request`.** Neither ever worked: both called
+  `/v1/approval-requests`, which has no handler in the API. And repairing them
+  as they were would have been dangerous: the resolve tool accepted an
+  agent-supplied `resolver_id`, so an agent could have approved its own held
+  action. An agent must never approve its own action; a person approves in the
+  AtlaSent console. A held or `INSUFFICIENT_APPROVALS` result still sets
+  `requires_human_approval` and still does not run. A test now fails if any
+  tool whose name suggests approving or resolving is registered.
+
 ## v2.13.0 — 2026-09-24
 
 ### Tools

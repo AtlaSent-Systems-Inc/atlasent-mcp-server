@@ -44,7 +44,7 @@ export type DenyDecision = {
   /**
    * Set when the denial is resolvable by a human approval
    * (`deny_code === "INSUFFICIENT_APPROVALS"`). A host can route the action
-   * to a person / approval queue (e.g. the `create_approval_request` tool)
+   * to a person (a human approves in the AtlaSent console — no MCP tool can)
    * rather than treating it as a terminal refusal. The action still does not
    * execute now — fail-closed is preserved.
    */

@@ -84,8 +84,7 @@ describe("tools/list", () => {
     assert.deepEqual(names, [
       "atlasent_atlas_lookup",
       "atlasent_check_permit",
-      "atlasent_create_approval_request",
-      "atlasent_create_evidence_export",
+          "atlasent_create_evidence_export",
       "atlasent_create_policy",
       "atlasent_create_scim_user",
       "atlasent_create_webhook",
@@ -114,8 +113,7 @@ describe("tools/list", () => {
       "atlasent_permit",
       "atlasent_query",
       "atlasent_record_execution_evaluation",
-      "atlasent_resolve_approval_request",
-      "atlasent_revoke_permit",
+          "atlasent_revoke_permit",
       "atlasent_test_siem_delivery",
       "atlasent_update_policy",
       "atlasent_upsert_siem_config",
@@ -1654,129 +1652,21 @@ describe("REST base URL resolution (functions/v1 stripping)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// atlasent_create_approval_request
+// No MCP tool can approve an action
 // ---------------------------------------------------------------------------
 
-describe("atlasent_create_approval_request", () => {
-  it("happy path: returns approval_request_id", async () => {
-    forceRemoteMode();
-    globalThis.fetch = mockFetch({
-      approval_request_id: "apr_xyz",
-      status: "pending",
-      created_at: "2026-01-01T00:00:00Z",
-    });
+// An agent must never approve (or file approvals for) its own held action:
+// approval is a human decision made in the AtlaSent console. The removed
+// create/resolve tools called an endpoint that does not exist and took an
+// agent-supplied resolver_id -- repaired, they would have been an agent
+// self-approval surface.
+describe("approval tools", () => {
+  it("exposes no tool that creates, resolves or approves an approval request", async () => {
     const { client } = await setup();
-    const result = await client.callTool({
-      name: "atlasent_create_approval_request",
-      arguments: {
-        subject: "user:alice",
-        action: "delete:production-db",
-        resource: "db:prod-postgres",
-        org_id: "org_abc",
-        justification: "Need to clean up old records",
-      },
-    });
-    const data = parseResult(result);
-    assert.equal(data.approval_request_id, "apr_xyz");
-    assert.equal(result.isError, undefined);
-  });
-
-  it("error path: 401 surfaces as isError", async () => {
-    forceRemoteMode();
-    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
-    const { client } = await setup();
-    const result = await client.callTool({
-      name: "atlasent_create_approval_request",
-      arguments: {
-        subject: "user:alice",
-        action: "delete:production-db",
-        resource: "db:prod-postgres",
-        org_id: "org_abc",
-      },
-    });
-    const data = parseResult(result);
-    assert.ok(data.error, "should have error field");
-    assert.equal(result.isError, true);
-  });
-
-  it("input validation: missing resource", async () => {
-    forceRemoteMode();
-    const { client } = await setup();
-    const result = await client.callTool({
-      name: "atlasent_create_approval_request",
-      arguments: {
-        subject: "user:alice",
-        action: "delete:production-db",
-        org_id: "org_abc",
-      },
-    });
-    assert.equal(result.isError, true);
-    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
-    assert.match(text, /resource/i);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// atlasent_resolve_approval_request
-// ---------------------------------------------------------------------------
-
-describe("atlasent_resolve_approval_request", () => {
-  it("happy path: approve returns resolved status", async () => {
-    forceRemoteMode();
-    globalThis.fetch = mockFetch({
-      approval_request_id: "apr_xyz",
-      status: "approved",
-      resolver_id: "user:bob",
-    });
-    const { client } = await setup();
-    const result = await client.callTool({
-      name: "atlasent_resolve_approval_request",
-      arguments: {
-        approval_request_id: "apr_xyz",
-        org_id: "org_abc",
-        resolution: "approve",
-        resolver_id: "user:bob",
-        comment: "LGTM",
-      },
-    });
-    const data = parseResult(result);
-    assert.equal(data.status, "approved");
-    assert.equal(result.isError, undefined);
-  });
-
-  it("error path: 401 surfaces as isError", async () => {
-    forceRemoteMode();
-    globalThis.fetch = mockFetch({ error: "unauthorized" }, 401);
-    const { client } = await setup();
-    const result = await client.callTool({
-      name: "atlasent_resolve_approval_request",
-      arguments: {
-        approval_request_id: "apr_xyz",
-        org_id: "org_abc",
-        resolution: "deny",
-        resolver_id: "user:bob",
-      },
-    });
-    const data = parseResult(result);
-    assert.ok(data.error, "should have error field");
-    assert.equal(result.isError, true);
-  });
-
-  it("input validation: invalid resolution value", async () => {
-    forceRemoteMode();
-    const { client } = await setup();
-    const result = await client.callTool({
-      name: "atlasent_resolve_approval_request",
-      arguments: {
-        approval_request_id: "apr_xyz",
-        org_id: "org_abc",
-        resolution: "maybe",
-        resolver_id: "user:bob",
-      },
-    });
-    assert.equal(result.isError, true);
-    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
-    assert.match(text, /resolution/i);
+    const { tools } = await client.listTools();
+    for (const t of tools) {
+      assert.doesNotMatch(t.name, /approv|resolve/i, `unexpected approval tool: ${t.name}`);
+    }
   });
 });
 
