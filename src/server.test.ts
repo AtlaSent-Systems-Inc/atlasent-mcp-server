@@ -83,6 +83,7 @@ describe("tools/list", () => {
     const names = tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "atlasent_atlas_lookup",
+      "atlasent_await_approval",
       "atlasent_check_permit",
           "atlasent_create_evidence_export",
       "atlasent_create_policy",
@@ -1664,7 +1665,11 @@ describe("approval tools", () => {
   it("exposes no tool that creates, resolves or approves an approval request", async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
+    // atlasent_await_approval is the one allowed name: it only WAITS for a
+    // person's decision and has no decision input (pinned in
+    // awaitApproval.test.ts).
     for (const t of tools) {
+      if (t.name === "atlasent_await_approval") continue;
       assert.doesNotMatch(t.name, /approv|resolve/i, `unexpected approval tool: ${t.name}`);
     }
   });

@@ -59,6 +59,11 @@ export type HoldDecision = {
   /** Stable machine code from the API denial, when present. */
   deny_code?: string;
   hold_id?: string;
+  /**
+   * Present when the runtime opened an approval request for this hold. Pass
+   * it to `atlasent_await_approval` to wait for a person's decision.
+   */
+  approval_request_id?: string;
   audit_id?: string;
   envelope_hash?: string;
 };

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Tools
+
+- **`atlasent_await_approval`** — wait for a person to approve or reject a held
+  action in the AtlaSent console (CROSS-056). Held results now carry
+  `approval_request_id`. On approval the tool claims the single permit the
+  runtime minted (`POST /v1/approvals/{id}/claim-permit`); it must still pass
+  `atlasent_verify_permit` before anything runs. Rejected, expired, timed out,
+  unclaimable or refused all return no permit. The tool has no decision input
+  and cannot approve. Needs `approvals:read` on the key.
+
 ### Security
 
 - **Removed `atlasent_create_approval_request` and

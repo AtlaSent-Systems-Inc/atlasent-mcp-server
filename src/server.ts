@@ -37,6 +37,7 @@ import {
   recordExecutionEvaluation,
   createWebhook,
   deleteWebhook,
+  awaitApproval,
 } from "./engine.js";
 import { registerV2Tools } from "./v2Tools.js";
 import { registerComplianceTools } from "./complianceTools.js";
@@ -1512,6 +1513,74 @@ export function createServer(): McpServer {
           resource: args.resource,
         });
         return toolResult(result as Record<string, unknown>);
+      } catch (e) {
+        return toolError(e);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // atlasent_await_approval (CROSS-056)
+  // -------------------------------------------------------------------------
+  // WAITS for a person's decision on a held action. It cannot approve: there
+  // is no decision/resolution input, and a person approves only in the
+  // AtlaSent console. On approval it claims the single permit the runtime
+  // minted; that permit must still go through atlasent_verify_permit before
+  // anything runs. Every other outcome is no permit (fail-closed).
+  server.registerTool(
+    "atlasent_await_approval",
+    {
+      title: "AtlaSent — Wait for Human Approval",
+      description:
+        "Wait for a person to approve or reject a held action in the AtlaSent console. " +
+        "Use the approval_request_id from a 'hold' result. This tool cannot approve anything; " +
+        "it only waits. If approved, it returns a permit_token that you MUST verify with " +
+        "atlasent_verify_permit before running the action. Any other outcome (rejected, expired, " +
+        "timed out) means the action must not run.",
+      inputSchema: z.object({
+        approval_request_id: z
+          .string()
+          .min(1)
+          .max(MAX_FIELD_LEN)
+          .describe("The approval_request_id from a 'hold' evaluate result."),
+        max_wait_seconds: z
+          .number()
+          .int()
+          .min(5)
+          .max(900)
+          .optional()
+          .describe("How long to wait for a decision (default 120, max 900)."),
+      }),
+      annotations: {
+        title: "AtlaSent — Wait for Human Approval",
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      if (!rateLimitOk("atlasent_await_approval")) {
+        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
+      }
+      if (getMode() !== "remote") {
+        return toolResult({
+          outcome: "not_approved",
+          approval_request_id: args.approval_request_id,
+          reasons: ["Human approval needs the hosted AtlaSent API (remote mode). Local mode never approves."],
+        });
+      }
+      try {
+        const result = await awaitApproval({
+          approval_request_id: args.approval_request_id,
+          max_wait_ms: (args.max_wait_seconds ?? 120) * 1000,
+        });
+        if (result.outcome === "approved") {
+          return toolResult({
+            ...result,
+            next_step: "Call atlasent_verify_permit with this permit_token before running the action.",
+          });
+        }
+        return toolResult(result);
       } catch (e) {
         return toolError(e);
       }

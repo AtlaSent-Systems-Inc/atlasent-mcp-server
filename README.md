@@ -308,7 +308,7 @@ Approval / Assertion collected
   → native effect
 ```
 
-Approvals are made by a person in the AtlaSent console, never by an agent: this server deliberately has no tool that creates or resolves an approval. When an action needs approval, the evaluate result says so (`requires_human_approval`) and the action does not run. The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
+Approvals are made by a person in the AtlaSent console, never by an agent: this server deliberately has no tool that creates or resolves an approval. When an action is held for a person, the result carries an `approval_request_id`; call `atlasent_await_approval` with it to wait while the person decides in the console. On approval it returns a permit that must still pass `atlasent_verify_permit`; a rejection, expiry or timeout returns no permit and the action does not run. (Remote mode only; local mode never approves.) The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
 
 ## Execution evidence
 

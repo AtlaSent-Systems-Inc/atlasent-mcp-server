@@ -320,6 +320,7 @@ interface RawEvaluate {
   denial?: { reasons?: string[]; code?: string };
   conditions?: string[];
   hold_id?: string;
+  approval_request_id?: string;
 }
 
 // Shared base request-body construction for POST /v1-evaluate. Both call
@@ -506,6 +507,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
       reasons,
       ...(holdCode && { deny_code: holdCode }),
       ...(data.hold_id && { hold_id: data.hold_id }),
+      ...(data.approval_request_id && { approval_request_id: data.approval_request_id }),
       ...(audit_id && { audit_id }),
       ...(envelope_hash && { envelope_hash }),
     };
@@ -849,6 +851,121 @@ export async function verifyPermitV1(params: VerifyPermitV1Params): Promise<unkn
   if (params.action !== undefined) body.action = params.action;
   if (params.resource !== undefined) body.resource = params.resource;
   return post("/v1/permits/verify", body);
+}
+
+// ---------------------------------------------------------------------------
+// Waiting for a human approval (CROSS-056)
+// ---------------------------------------------------------------------------
+//
+// A held evaluation carries approval_request_id. A PERSON decides it in the
+// AtlaSent console; this code can only wait for that decision and, on
+// approval, claim the one permit the runtime minted for it. It cannot
+// approve anything. Same protocol as atlasent-action's
+// waitForApprovalResolution (packages/enforce):
+//   GET  /v1/approvals/{id}              status poll; never carries a token
+//   POST /v1/approvals/{id}/claim-permit one-time atomic claim on "approved"
+// Fail-closed throughout: any terminal status other than "approved", an
+// "approved" with no claimable permit, an auth/not-found error, or running
+// out of time all mean NO permit.
+
+export interface AwaitApprovalParams {
+  approval_request_id: string;
+  /** Upper bound on the wait. Exceeding it returns outcome "timeout". */
+  max_wait_ms: number;
+  /** Poll interval; tests shorten it. */
+  poll_interval_ms?: number;
+}
+
+export type AwaitApprovalResult =
+  | { outcome: "approved"; permit_token: string; approval_request_id: string }
+  | {
+      outcome: "not_approved" | "timeout";
+      approval_request_id: string;
+      status?: string;
+      reasons: string[];
+    };
+
+const APPROVAL_POLL_INTERVAL_MS = 5_000;
+
+async function rawRequest(
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; json: Record<string, unknown> | null }> {
+  const res = await fetch(`${resolveBase(path)}${path}`, {
+    method,
+    headers: buildHeaders(),
+    ...(body !== undefined && { body: JSON.stringify(body) }),
+    signal: makeAbortSignal(REQUEST_TIMEOUT_MS),
+  });
+  let json: Record<string, unknown> | null = null;
+  try {
+    json = (await res.json()) as Record<string, unknown>;
+  } catch {
+    json = null;
+  }
+  return { status: res.status, json };
+}
+
+export async function awaitApproval(params: AwaitApprovalParams): Promise<AwaitApprovalResult> {
+  const id = params.approval_request_id;
+  const pathId = encodeURIComponent(id);
+  const interval = params.poll_interval_ms ?? APPROVAL_POLL_INTERVAL_MS;
+  const deadline = Date.now() + params.max_wait_ms;
+  const notApproved = (reasons: string[], status?: string): AwaitApprovalResult => ({
+    outcome: "not_approved",
+    approval_request_id: id,
+    ...(status && { status }),
+    reasons,
+  });
+
+  while (Date.now() < deadline) {
+    let polled: { status: number; json: Record<string, unknown> | null };
+    try {
+      polled = await rawRequest("GET", `/v1/approvals/${pathId}`);
+    } catch {
+      // Transient network failure: retry within the bounded window.
+      await new Promise((r) => setTimeout(r, interval));
+      continue;
+    }
+    if (polled.status === 401 || polled.status === 403) {
+      return notApproved([
+        `Approval status check was refused (HTTP ${polled.status}). The API key needs approvals:read.`,
+      ]);
+    }
+    if (polled.status === 404) return notApproved(["Approval request not found."]);
+
+    const rowStatus = typeof polled.json?.status === "string" ? polled.json.status : undefined;
+    if (polled.status === 200 && rowStatus && rowStatus !== "pending") {
+      if (rowStatus !== "approved") {
+        return notApproved([`A person did not approve this action (status: ${rowStatus}).`], rowStatus);
+      }
+      // Approved: claim the permit exactly once. Anything but a genuine
+      // claim (lost race, re-evaluation minted nothing, error) is no permit.
+      let claimed: { status: number; json: Record<string, unknown> | null };
+      try {
+        claimed = await rawRequest("POST", `/v1/approvals/${pathId}/claim-permit`, {});
+      } catch {
+        return notApproved(["Approved, but the permit could not be claimed (network error)."], rowStatus);
+      }
+      const token = claimed.json?.permit_token;
+      if (claimed.status === 200 && claimed.json?.claimed === true && typeof token === "string" && token) {
+        return { outcome: "approved", permit_token: token, approval_request_id: id };
+      }
+      return notApproved(
+        ["Approved, but no permit was available to claim (already claimed, or the re-check did not allow)."],
+        rowStatus,
+      );
+    }
+    // pending, 5xx, rate limit or malformed: keep waiting until the deadline.
+    await new Promise((r) => setTimeout(r, interval));
+  }
+
+  return {
+    outcome: "timeout",
+    approval_request_id: id,
+    reasons: ["No decision from a person within the wait time. The action must not run."],
+  };
 }
 
 // ---------------------------------------------------------------------------
