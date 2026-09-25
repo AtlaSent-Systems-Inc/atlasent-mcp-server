@@ -7,7 +7,17 @@ MCP server that enforces authorize-before-execute for any MCP-compatible AI agen
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Glama MCP server](https://glama.ai/mcp/servers/Atlasent/atlasent-mcp-server/badge)](https://glama.ai/mcp/servers/Atlasent/atlasent-mcp-server)
 
-**Authorization for consequential AI-agent actions at the execution boundary.**
+**AtlaSent stops risky changes to production unless someone approved them, and gives you proof for your auditor.**
+
+This MCP server brings that to AI agents (Claude, Cursor, Windsurf, any MCP host):
+
+1. **Connect it** to your agent with a few lines of config.
+2. **Risky actions wait** for a person to approve them. Everything else runs as normal.
+3. **Every action gets a signed receipt** your auditor can check, without trusting us.
+
+Try it in 60 seconds with no account: `npx -y @atlasent/mcp-server` (local mode).
+
+### For engineers
 
 AtlaSent performs **execution-time authorization**: determine whether a specific consequential Action is authorized now, issue a bounded Permit on `allow`, verify that Permit at the execution Gate, and only then allow the governed native effect.
 
@@ -216,8 +226,8 @@ A wrapper, decorator, prompt, or MCP tool definition is not automatically a non-
 Simple local/remote authorization helper for MCP hosts.
 
 ```text
-Input:  { action_type, actor_id, environment, approvals?, change_window? }
-Output: { decision: "allow" | "deny" | "hold", permit_token?, ... }
+Input:  { action_type, actor_id, environment, approvals?, change_window?, target_id?, change_plan?, target_system? }
+Output: { decision: "allow" | "deny" | "hold", permit_token?, notes?, ... }
 ```
 
 On `allow`, **do not execute yet**. Present the Permit to `verify_permit` at the execution boundary first.
@@ -323,7 +333,26 @@ Approval / Assertion collected
   → native effect
 ```
 
-Use `atlasent_create_approval_request` and `atlasent_resolve_approval_request` to manage approval inputs. The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
+Approvals are made by a person in the AtlaSent console, never by an agent: this server deliberately has no tool that creates or resolves an approval. When an action is held for a person, the result carries an `approval_request_id`; call `atlasent_await_approval` with it to wait while the person decides in the console. On approval it returns a permit that must still pass `atlasent_verify_permit`; a rejection, expiry or timeout returns no permit and the action does not run. (Remote mode only; local mode never approves.) The protected Action must still satisfy the current authorization path and execution-boundary Verification before proceeding.
+
+**Change plans and plan changes.** `production.deploy`, `infrastructure.change`, `production.rollback` and `secret.configuration.change` need a `change_plan` (`{ operation, revision?, artifact_ref? }`, with a revision and/or artifact ref). Pass it to `deploy_service`, `evaluate` or `atlasent_evaluate`. The server first creates a Change Brief recording exactly that plan, then evaluates with the brief id and the same plan. When the key cannot create briefs (HTTP 403) or the runtime has none (HTTP 404), the server evaluates with the plan alone and adds a `notes` entry. Any other brief failure blocks the evaluation. On claim, the server presents the same plan again, so a mismatch means the plan really changed. If your plan changed while you waited, pass the new plan to `atlasent_await_approval` as `change_plan`. By default the server files **one** linked re-request for the new plan (`supersedes_approval_id` set to the old approval), then waits for a person to decide it. The result shows the steps in `summary`, for example "plan changed from X to Y → re-request sent (approval …) → waiting → approved". With `on_plan_mismatch: "use_approved"`, the server claims the approved plan and returns it as `approved_plan`; run exactly that plan. A second mismatch, a revoked or suspicious approval, or an organization policy with `auto_rerequest_on_mismatch: false` stops the wait with no permit. The result includes the diff and what to do next.
+
+For action classes that require a verified actor, the runtime resolves the approval to `approved_awaiting_claim` and mints the permit only when the claim presents the actor's identity. The server then asks the runtime for a short-lived `actor_identity.v1` for its own agent (`POST /v1-agent-actor-identity`, available only to an API key bound to a registered agent). The action type and environment come from the approval record, and the server claims with `{ actor_identity }`. If that identity cannot be obtained, nothing is claimed and no permit is returned. On a runtime without that endpoint (HTTP 404), the server claims with an empty body as before and adds a note to the result.
+
+## Which agent, whose agent, which chat
+
+Every evaluate call reports **which app** it came from (the MCP client's name,
+e.g. `claude-code` or `cursor`) and **which chat or session** as
+`agent_session`. AtlaSent stores this labelled *reported by the agent host*:
+useful for tracing an action back to the conversation that caused it, never
+used to decide anything.
+
+- Session id: the Streamable HTTP session, else `ATLASENT_SESSION_ID` if your
+  host sets it, else a per-process id prefixed `mcp-process-`.
+- Optional `ATLASENT_RUN_ID` for a run or job id.
+- With an **agent API key**, leave `actor_id` empty: AtlaSent identifies the
+  agent and the person it acts for from the key itself, so the model never
+  names itself.
 
 ## Execution evidence
 

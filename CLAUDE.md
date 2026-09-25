@@ -81,7 +81,7 @@ The guarantee: if `authorize()` does not return `allow`, the action code never r
 
 - `ATLASENT_MODE=remote` -> hosted AtlaSent API
 - `ATLASENT_MODE=local` -> in-process rules engine
-- Unset -> `remote` if both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are set, else `local`
+- Unset -> `remote` if `ATLASENT_API_KEY` is set (`ATLASENT_BASE_URL` defaults to `https://api.atlasent.io/functions/v1`), else `local`. Before 2026-09-25 a key without a base URL silently fell back to forgeable local mode, contradicting server.json and the README.
 
 ## Build, test, run
 
@@ -209,6 +209,54 @@ Two callers were silently unbound as a result, both now fixed:
 
 The binding is additive: a caller that supplies no target sends a
 byte-identical request to before, pinned by a test.
+
+### Approval claim with the agent's own identity (IMPL-026B, 2026-09-25)
+
+When `atlasent_await_approval` polls a row in `approved_awaiting_claim`, the
+permit does not exist yet. The runtime mints it only on a claim that presents
+the action actor's `actor_identity.v1`. `awaitApproval` calls
+`mintAgentActorIdentity(action_type, environment)`, which POSTs to
+`/v1-agent-actor-identity` with the usual headers and a 10 s timeout. The
+action type and environment come from the approval row, never from the agent.
+The runtime signs `agent:<agent_identity_id>` with role `agent` only for an API
+key bound to a registered agent (CROSS-056). The server then claims with
+`{ actor_identity }`.
+
+- A failed mint (refusal, 5xx, network, malformed or mismatched assertion)
+  means no claim and no permit.
+- A 404 from the mint means an older runtime. The server claims with `{}` and
+  adds a `notes` entry; the runtime decides.
+- A plain `approved` row is claimed with `{}` exactly as before, and no mint
+  happens.
+- A 409 `claim_in_progress` re-polls, and the next attempt mints a fresh
+  identity.
+
+### Change plans, auto Change Brief, plan-mismatch recovery (IMPL-026B decision 5, 2026-09-25)
+
+For the four mandatory-change-control action types, every evaluate path here
+(`deploy_service`, `evaluate`, `atlasent_evaluate`; `agentToolGate` evaluates
+`agent.tool.invoke` and is unaffected) takes a `change_plan`.
+`attachChangeControl` (`src/engine.ts`) creates a brief with
+`POST /v1-change-brief` whose `execution_change_plan` is exactly that plan. It
+then sends `change_plan` and `change_brief_id` top-level to `/v1-evaluate`, and
+remembers the plan per held `approval_request_id` (in process memory, capped
+at 256). The claim presents that same plan, so the runtime answers 409
+`change_plan_mismatch` only on a real change.
+
+- Brief 404 or 403, or an unknown actor_id, target_id or environment (the
+  brief must match the evaluate request on these): no brief, a `notes` entry,
+  and the evaluation goes ahead. Any other brief failure throws, so there is
+  no evaluation and no permit.
+- On a mismatch, `awaitApproval` files at most ONE linked re-request per call:
+  the same evaluate body, the presented plan, a new brief, and
+  `supersedes_approval_id`. It then waits on the new approval id. A second
+  mismatch, a revoked or suspicious approval, `auto_rerequest_on_mismatch:
+  false`, or a request this process did not evaluate stops the wait with no
+  permit and returns the diff. Absent runtime flags default to true.
+- `on_plan_mismatch: "use_approved"` claims again without `change_plan` and
+  returns the approved plan, rebuilt from the runtime's diff, as
+  `approved_plan`. If the diff cannot be read, nothing is claimed.
+- Tests: `src/planMismatch.test.ts`.
 
 Headers: `Authorization: Bearer $ATLASENT_API_KEY`, optional `x-anon-key: $ATLASENT_ANON_KEY`.
 

@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Atlasent/mcp-server",
   "title": "AtlaSent MCP Server",
-  "description": "Authorize-before-execute for AI agents: evaluate an action, get a permit, verify it before running.",
+  "description": "Stops risky production changes unless someone approved them, and gives you proof for your auditor.",
   "version": "2.13.0",
   "websiteUrl": "https://github.com/Atlasent/atlasent-mcp-server",
   "repository": {
@@ -30,7 +30,7 @@
         },
         {
           "name": "ATLASENT_MODE",
-          "description": "remote (default when API key + base URL set) or local (in-process rules engine, no API calls)",
+          "description": "remote (default when an API key is set) or local (in-process rules engine, no API calls)",
           "isRequired": false,
           "choices": ["remote", "local"]
         }

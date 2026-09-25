@@ -1,5 +1,36 @@
 # Release Notes
 
+## Unreleased
+
+### Tools
+
+- **`atlasent_await_approval`** — wait for a person to approve or reject a held
+  action in the AtlaSent console (CROSS-056). Held results now carry
+  `approval_request_id`. On approval the tool claims the single permit the
+  runtime minted (`POST /v1/approvals/{id}/claim-permit`); it must still pass
+  `atlasent_verify_permit` before anything runs. Rejected, expired, timed out,
+  unclaimable or refused all return no permit. The tool has no decision input
+  and cannot approve. Needs `approvals:read` on the key.
+
+- **Reported session on every evaluate** (CROSS-056 §2b): `agent_session`
+  carries the MCP client's name and the chat/session id (`ATLASENT_SESSION_ID`,
+  `ATLASENT_RUN_ID`, or the Streamable HTTP session; a generated
+  `mcp-process-…` id otherwise). Top-level, never inside `context`.
+- **`atlasent_evaluate` `actor_id` is optional.** Leave it empty with an agent
+  API key; the runtime derives the agent and its owner from the key.
+
+### Security
+
+- **Removed `atlasent_create_approval_request` and
+  `atlasent_resolve_approval_request`.** Neither ever worked: both called
+  `/v1/approval-requests`, which has no handler in the API. And repairing them
+  as they were would have been dangerous: the resolve tool accepted an
+  agent-supplied `resolver_id`, so an agent could have approved its own held
+  action. An agent must never approve its own action; a person approves in the
+  AtlaSent console. A held or `INSUFFICIENT_APPROVALS` result still sets
+  `requires_human_approval` and still does not run. A test now fails if any
+  tool whose name suggests approving or resolving is registered.
+
 ## v2.13.0 — 2026-09-24
 
 ### Tools

@@ -34,12 +34,13 @@ import {
   getDecision,
   issuePermit,
   verifyPermitV1,
-  createApprovalRequest,
-  resolveApprovalRequest,
   recordExecutionEvaluation,
   createWebhook,
   deleteWebhook,
+  awaitApproval,
+  type ReportedAgentSession,
 } from "./engine.js";
+import { randomUUID } from "node:crypto";
 import { registerV2Tools } from "./v2Tools.js";
 import { registerComplianceTools } from "./complianceTools.js";
 import { registerVqpTools } from "./vqpTools.js";
@@ -100,6 +101,25 @@ const payloadHash = z
   .max(MAX_FIELD_LEN)
   .optional()
   .describe("Hash of the exact executed payload (tool-call arguments / artifact digest). Bind it at evaluate via execution_payload_hash; presenting a different hash at verify yields PAYLOAD_MISMATCH.");
+const changePlan = z
+  .object({
+    operation: z.string().min(1).max(MAX_FIELD_LEN).describe("What kind of change (e.g. deploy, rollback, apply)."),
+    revision: z.string().min(1).max(MAX_FIELD_LEN).optional().describe("Source/config revision that will run (e.g. a git SHA)."),
+    artifact_ref: z.string().min(1).max(MAX_FIELD_LEN).optional().describe("Built artifact that will run (e.g. an image digest)."),
+  })
+  .strict()
+  .optional()
+  .describe(
+    "The exact change you will run. Required by AtlaSent for production.deploy, infrastructure.change, " +
+      "production.rollback and secret.configuration.change: operation plus a revision and/or artifact_ref. " +
+      "A Change Brief recording it is created automatically, and the same plan is presented when an approval is claimed.",
+  );
+const targetSystem = z
+  .string()
+  .min(1)
+  .max(MAX_FIELD_LEN)
+  .optional()
+  .describe("System the target lives in (e.g. kubernetes, github). Shown in the auto-created Change Brief.");
 
 // Fields we'll keep verbatim in the structured stderr log. Anything
 // not on the allowlist is either dropped (sensitive) or hashed-and-
@@ -210,11 +230,31 @@ function verificationFailureDecision(
 // Authorization primitives (evaluate, verify_permit) are intentionally
 // excluded — they must always be callable to bootstrap the flow.
 // ---------------------------------------------------------------------------
+// One id per server process for hosts that give no session id (stdio). Marked
+// as generated so nobody mistakes it for the host's own chat id.
+const PROCESS_SESSION_ID = `mcp-process-${randomUUID()}`;
+
+/**
+ * Which app and which chat/session this call came from, as REPORTED by the
+ * agent host (CROSS-056 §2b). Never authority: the runtime stores it
+ * labelled "reported". Host = the MCP client's own name (e.g. "claude-code",
+ * "cursor"). Session = the Streamable HTTP session id, else
+ * ATLASENT_SESSION_ID set by the host, else a per-process generated id.
+ */
+export function reportedSessionFor(server: McpServer): ReportedAgentSession {
+  const host = server.server.getClientVersion()?.name;
+  const transportSession = server.server.transport?.sessionId;
+  const session_id = transportSession || process.env.ATLASENT_SESSION_ID || PROCESS_SESSION_ID;
+  const run_id = process.env.ATLASENT_RUN_ID;
+  return { ...(host && { host }), session_id, ...(run_id && { run_id }) };
+}
+
 async function agentToolGate(
   toolName: string,
   actorId: string,
   environment: string,
   approvals?: string[],
+  agentSession?: ReportedAgentSession,
 ): Promise<Decision | null> {
   // Forward the call's approvals into the gate context. Without this, a
   // production tool call is denied at the agent gate for "no approvals" even
@@ -226,12 +266,18 @@ async function agentToolGate(
     actor_id: actorId,
     environment,
     tool_name: toolName,
+    // The runtime's agent.tool.invoke class declares required_context_inputs
+    // ['tool', 'environment'] (seed_ai_agent_safeguard, Canon ACT-0029). It
+    // reads `context.tool`, not `tool_name`; without it every gated call is
+    // denied for a missing required input.
+    tool: toolName,
     // The tool being invoked is this gate's target. `tool_name` alone rides in
     // context for audit and is NOT one of the runtime's binding fields
     // (target/target_id/ref/workflow_id/run_id/commit_sha), so without this a
     // permit minted to invoke one tool verifies for any other.
     target_id: toolName,
     ...(approvals && approvals.length ? { approvals } : {}),
+    ...(agentSession && { agent_session: agentSession }),
   };
   const gate = await authorize(ctx);
   if (gate.decision !== "allow") {
@@ -362,6 +408,9 @@ export function createServer(): McpServer {
         environment,
         approvals,
         change_window: changeWindow,
+        target_id: targetId,
+        change_plan: changePlan,
+        target_system: targetSystem,
       }),
       annotations: {
         title: "AtlaSent — Evaluate Action",
@@ -385,6 +434,10 @@ export function createServer(): McpServer {
         environment: args.environment,
         ...(args.approvals ? { approvals: args.approvals } : {}),
         ...(args.change_window ? { change_window: args.change_window } : {}),
+        ...(args.target_id ? { target_id: args.target_id } : {}),
+        ...(args.change_plan ? { change_plan: args.change_plan } : {}),
+        ...(args.target_system ? { target_system: args.target_system } : {}),
+        agent_session: reportedSessionFor(server),
       };
       const decision = await authorize(ctx);
       log("evaluate", { ctx, decision });
@@ -481,6 +534,8 @@ export function createServer(): McpServer {
         actor_id: actorId,
         approvals,
         change_window: changeWindow,
+        change_plan: changePlan,
+        target_system: targetSystem,
       }),
       annotations: {
         title: "Deploy Service",
@@ -501,7 +556,7 @@ export function createServer(): McpServer {
 
       // Outer Gate: agent.tool.invoke is authorized and its Permit is
       // verified inside agentToolGate before this handler can continue.
-      const agentGate = await agentToolGate("deploy_service", args.actor_id, args.environment, args.approvals);
+      const agentGate = await agentToolGate("deploy_service", args.actor_id, args.environment, args.approvals, reportedSessionFor(server));
       if (agentGate !== null) return toolResult(agentGate);
 
       const ctx: ActionContext = {
@@ -516,6 +571,11 @@ export function createServer(): McpServer {
         target_id: args.service_name,
         ...(args.approvals ? { approvals: args.approvals } : {}),
         ...(args.change_window ? { change_window: args.change_window } : {}),
+        // production.deploy is a mandatory-change-control action: the plan
+        // goes to evaluate top-level with an auto-created Change Brief.
+        ...(args.change_plan ? { change_plan: args.change_plan } : {}),
+        ...(args.target_system ? { target_system: args.target_system } : {}),
+        agent_session: reportedSessionFor(server),
       };
 
       const decision = await authorize(ctx);
@@ -570,9 +630,12 @@ export function createServer(): McpServer {
       inputSchema: z.object({
         actor_id: z
           .string()
-          .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("The actor performing the action (e.g. 'user:alice', 'service:deploy-bot')."),
+          .optional()
+          .describe(
+            "Leave empty when using an agent API key: AtlaSent identifies the agent and its owner " +
+              "from the key. Only set this for a non-agent key (e.g. 'service:deploy-bot').",
+          ),
         action_type: z
           .string()
           .min(1)
@@ -588,6 +651,8 @@ export function createServer(): McpServer {
           .describe("When true, populates risk_envelope.factors with a per-factor score breakdown"),
         execution_payload_hash: payloadHash,
         target_id: targetId,
+        change_plan: changePlan,
+        target_system: targetSystem,
       }),
       annotations: {
         title: "AtlaSent — Evaluate (Remote API)",
@@ -605,7 +670,8 @@ export function createServer(): McpServer {
       }
       try {
         const result = await evaluateAction({
-          actor_id: args.actor_id,
+          ...(args.actor_id ? { actor_id: args.actor_id } : {}),
+          agent_session: reportedSessionFor(server),
           action_type: args.action_type,
           context: args.context,
           ...(args.explain !== undefined ? { explain: args.explain } : {}),
@@ -613,6 +679,8 @@ export function createServer(): McpServer {
             ? { execution_payload_hash: args.execution_payload_hash }
             : {}),
           ...(args.target_id !== undefined ? { target_id: args.target_id } : {}),
+          ...(args.change_plan !== undefined ? { change_plan: args.change_plan } : {}),
+          ...(args.target_system !== undefined ? { target_system: args.target_system } : {}),
         });
         log("atlasent_evaluate", { result });
         return toolResult(result);
@@ -1521,131 +1589,85 @@ export function createServer(): McpServer {
   );
 
   // -------------------------------------------------------------------------
-  // atlasent_create_approval_request
+  // atlasent_await_approval (CROSS-056)
   // -------------------------------------------------------------------------
+  // WAITS for a person's decision on a held action. It cannot approve: there
+  // is no decision/resolution input, and a person approves only in the
+  // AtlaSent console. On approval it claims the single permit the runtime
+  // minted; that permit must still go through atlasent_verify_permit before
+  // anything runs. Every other outcome is no permit (fail-closed).
   server.registerTool(
-    "atlasent_create_approval_request",
+    "atlasent_await_approval",
     {
-      title: "AtlaSent — Create Approval Request",
+      title: "AtlaSent — Wait for Human Approval",
       description:
-        "Create an approval request for a held action. The request ID is returned " +
-        "in the evaluate response when decision is 'hold'. Submit resolution via " +
-        "atlasent_resolve_approval_request. Approval is an input to Authorization; " +
-        "it does not itself authorize or prove execution.",
-      inputSchema: z.object({
-        subject: z
-          .string()
-          .min(1)
-          .max(MAX_FIELD_LEN)
-          .describe("The actor requesting the approval (e.g. 'user:alice')."),
-        action: z
-          .string()
-          .min(1)
-          .max(MAX_FIELD_LEN)
-          .describe("The action requiring approval (e.g. 'production.deploy')."),
-        resource: z
-          .string()
-          .min(1)
-          .max(MAX_FIELD_LEN)
-          .describe("The resource the action targets (e.g. 'env:production')."),
-        org_id: z
-          .string()
-          .min(1)
-          .max(MAX_FIELD_LEN)
-          .describe("Organization ID that owns the policy."),
-        justification: z
-          .string()
-          .max(MAX_FIELD_LEN)
-          .optional()
-          .describe("Human-readable justification for why the action is needed."),
-        context: z
-          .record(z.string(), z.unknown())
-          .optional()
-          .describe("Context from the original evaluate call."),
-      }),
-      annotations: {
-        title: "AtlaSent — Create Approval Request",
-        readOnlyHint: false,
-        destructiveHint: false,
-        openWorldHint: false,
-      },
-    },
-    async (args) => {
-      if (!rateLimitOk("atlasent_create_approval_request")) {
-        return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
-      }
-      try {
-        const result = await createApprovalRequest({
-          subject: args.subject,
-          action: args.action,
-          resource: args.resource,
-          org_id: args.org_id,
-          justification: args.justification,
-          context: args.context,
-        });
-        return toolResult(result as Record<string, unknown>);
-      } catch (e) {
-        return toolError(e);
-      }
-    },
-  );
-
-  // -------------------------------------------------------------------------
-  // atlasent_resolve_approval_request
-  // -------------------------------------------------------------------------
-  server.registerTool(
-    "atlasent_resolve_approval_request",
-    {
-      title: "AtlaSent — Resolve Approval Request",
-      description:
-        "Approve or deny a pending approval request. Approval records a verified input; " +
-        "the protected action must still satisfy the current authorization/reevaluation " +
-        "path and Permit Verification before execution.",
+        "Wait for a person to approve or reject a held action in the AtlaSent console. " +
+        "Use the approval_request_id from a 'hold' result. This tool cannot approve anything; " +
+        "it only waits. If approved, it returns a permit_token that you MUST verify with " +
+        "atlasent_verify_permit before running the action. Any other outcome (rejected, expired, " +
+        "timed out) means the action must not run.",
       inputSchema: z.object({
         approval_request_id: z
           .string()
           .min(1)
           .max(MAX_FIELD_LEN)
-          .describe("The approval_request_id from atlasent_create_approval_request."),
-        org_id: z
-          .string()
-          .min(1)
-          .max(MAX_FIELD_LEN)
-          .describe("Organization ID that owns the approval request."),
-        resolution: z
-          .enum(["approve", "deny"])
-          .describe("Whether to approve or deny the request."),
-        resolver_id: z
-          .string()
-          .min(1)
-          .max(MAX_FIELD_LEN)
-          .describe("Identity of the person or system resolving the request."),
-        comment: z
-          .string()
-          .max(MAX_FIELD_LEN)
+          .describe("The approval_request_id from a 'hold' evaluate result."),
+        max_wait_seconds: z
+          .number()
+          .int()
+          .min(5)
+          .max(900)
           .optional()
-          .describe("Optional comment explaining the resolution."),
+          .describe("How long to wait for a decision (default 120, max 900)."),
+        change_plan: changePlan.describe(
+          "Your CURRENT change plan, if it changed since the action was evaluated. Omit it to present the plan " +
+            "this server evaluated. It is only a declaration: the approved plan is what runs unless a person approves the new one.",
+        ),
+        on_plan_mismatch: z
+          .enum(["rerequest", "use_approved"])
+          .optional()
+          .describe(
+            "If your plan differs from the approved one: 'rerequest' (default) files ONE linked re-request for your " +
+              "plan and keeps waiting; 'use_approved' claims the approved plan instead and returns it so you run exactly that.",
+          ),
       }),
       annotations: {
-        title: "AtlaSent — Resolve Approval Request",
+        title: "AtlaSent — Wait for Human Approval",
         readOnlyHint: false,
         destructiveHint: false,
         openWorldHint: false,
       },
     },
     async (args) => {
-      if (!rateLimitOk("atlasent_resolve_approval_request")) {
+      if (!rateLimitOk("atlasent_await_approval")) {
         return toolResult({ error: "rate_limit", reasons: ["MCP tool rate limit exceeded"] });
       }
-      try {
-        const result = await resolveApprovalRequest({
+      if (getMode() !== "remote") {
+        return toolResult({
+          outcome: "not_approved",
           approval_request_id: args.approval_request_id,
-          org_id: args.org_id,
-          resolution: args.resolution,
-          resolver_id: args.resolver_id,
-          comment: args.comment,
+          reasons: ["Human approval needs the hosted AtlaSent API (remote mode). Local mode never approves."],
         });
-        return toolResult(result as Record<string, unknown>);
+      }
+      try {
+        const result = await awaitApproval({
+          approval_request_id: args.approval_request_id,
+          max_wait_ms: (args.max_wait_seconds ?? 120) * 1000,
+          ...(args.change_plan ? { change_plan: args.change_plan } : {}),
+          ...(args.on_plan_mismatch ? { on_plan_mismatch: args.on_plan_mismatch } : {}),
+        });
+        const summary = result.progression?.length ? { summary: result.progression.join(" → ") } : {};
+        log("atlasent_await_approval", { outcome: result.outcome, approval_request_id: result.approval_request_id, ...summary });
+        if (result.outcome === "approved") {
+          return toolResult({
+            ...result,
+            ...summary,
+            next_step:
+              "Call atlasent_verify_permit with this permit_token before running the action" +
+              (result.approved_plan ? ", and run exactly approved_plan." : "."),
+          });
+        }
+        return toolResult({ ...result, ...summary });
       } catch (e) {
         return toolError(e);
       }

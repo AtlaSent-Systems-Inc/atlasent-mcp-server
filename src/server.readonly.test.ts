@@ -37,8 +37,6 @@ const STILL_AVAILABLE_IN_READONLY = [
   "atlasent_get_permit",
   "atlasent_check_permit",
   "atlasent_get_decision",
-  "atlasent_create_approval_request",
-  "atlasent_resolve_approval_request",
   "atlasent_record_execution_evaluation",
 ];
 

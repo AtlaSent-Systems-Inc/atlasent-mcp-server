@@ -12,6 +12,8 @@ export type ActionContext = {
   approvals?: string[];
   change_window?: string;
   tool_name?: string;
+  /** Tool being invoked; the agent.tool.invoke class requires `context.tool`. */
+  tool?: string;
   state_snapshot?: Record<string, unknown>;
   /**
    * Target resource the permit is bound to (service, artifact, tool-call
@@ -26,6 +28,19 @@ export type ActionContext = {
    * tool call fail closed rather than silently execute.
    */
   payload_hash?: string;
+  /** Host-reported app + chat/session; see ReportedAgentSession in engine.ts. */
+  agent_session?: { host?: string; session_id?: string; run_id?: string };
+  /**
+   * Structured change plan for the four mandatory-change-control action types
+   * (production.deploy, infrastructure.change, production.rollback,
+   * secret.configuration.change). Sent top-level to /v1-evaluate, recorded in
+   * an auto-created Change Brief, and presented again at claim time so a
+   * plan mismatch only happens when the plan genuinely changed. Only real
+   * inputs: nothing here is ever inferred.
+   */
+  change_plan?: { operation: string; revision?: string; artifact_ref?: string };
+  /** Descriptive system the target lives in, for the auto Change Brief. */
+  target_system?: string;
 };
 
 export type AllowDecision = {
@@ -34,6 +49,8 @@ export type AllowDecision = {
   audit_id?: string;
   envelope_hash?: string;
   conditions?: string[];
+  /** Client-side notes (e.g. a Change Brief could not be created). */
+  notes?: string[];
 };
 
 export type DenyDecision = {
@@ -44,13 +61,14 @@ export type DenyDecision = {
   /**
    * Set when the denial is resolvable by a human approval
    * (`deny_code === "INSUFFICIENT_APPROVALS"`). A host can route the action
-   * to a person / approval queue (e.g. the `create_approval_request` tool)
+   * to a person (a human approves in the AtlaSent console — no MCP tool can)
    * rather than treating it as a terminal refusal. The action still does not
    * execute now — fail-closed is preserved.
    */
   requires_human_approval?: boolean;
   audit_id?: string;
   envelope_hash?: string;
+  notes?: string[];
 };
 
 export type HoldDecision = {
@@ -59,8 +77,14 @@ export type HoldDecision = {
   /** Stable machine code from the API denial, when present. */
   deny_code?: string;
   hold_id?: string;
+  /**
+   * Present when the runtime opened an approval request for this hold. Pass
+   * it to `atlasent_await_approval` to wait for a person's decision.
+   */
+  approval_request_id?: string;
   audit_id?: string;
   envelope_hash?: string;
+  notes?: string[];
 };
 
 export type Decision = AllowDecision | DenyDecision | HoldDecision;
