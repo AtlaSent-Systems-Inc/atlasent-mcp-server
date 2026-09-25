@@ -6,11 +6,28 @@
  * server, drive the full evaluate → act → verify flow, and see allow / deny /
  * hold outcomes without any network credentials.
  *
- * Rules (fail-closed defaults):
+ * NOT FAIL-CLOSED, AND NOT PROTECTION. This header said "Rules (fail-closed
+ * defaults)" until 2026-09-25 while rule 3 below was an unconditional allow —
+ * an action type this engine does not recognise is ALLOWED. That is the
+ * opposite of fail-closed, and "fail-closed is absolute" is stated as a
+ * non-negotiable invariant across every other AtlaSent repo, so the claim was
+ * wrong in the direction that matters. The behaviour is deliberate and is not
+ * being changed: this engine exists so a developer can see allow / deny / hold
+ * without credentials, and a deny-by-default demo would demonstrate nothing.
+ * What was wrong was calling it something it isn't.
+ *
+ * If you want real local enforcement, that is a different package:
+ * @atlasent/mcp-gate is a stdio proxy whose policy starts at
+ * `{"default":"deny","rules":[]}` and blocks every tool call until an operator
+ * writes a rule. Local rules there are operator configuration — still not
+ * organizational permits. See the authority ladder in the repo root README.
+ *
+ * Rules (demo engine; terminal rule is allow):
  *   0. canonical action class recognition (AC-001–AC-020)  ← runs first
  *   1. production action + no approvals     → deny
  *   2. destructive action + no change window → hold
- *   3. otherwise                              → allow
+ *   3. otherwise                              → allow  ← includes unrecognised
+ *                                                 action types
  *
  * The canonical action class layer (step 0) intercepts Sign, Certify, Grant,
  * Revoke, Suspend, Resume with deny; Override, Release, Export, Import,
@@ -440,10 +457,20 @@ export function authorizeLocal(ctx: ActionContext): Decision {
     };
   }
 
-  // Step 3: allow
+  // Step 3: allow — the terminal rule, reached by anything steps 0-2 did not
+  // classify, INCLUDING action types this engine has never heard of. Says so
+  // in `conditions` so a caller reading the decision sees the same thing the
+  // header says: this is a demo default, not a judgement that the action is
+  // safe. A caller that wants deny-by-default wants @atlasent/mcp-gate.
   return {
     decision: "allow",
     permit_token: shortId("pt_local"),
+    conditions: [
+      "Local demo engine: no rule matched, and the terminal rule is allow. " +
+        "This is not a finding that the action is safe, and local permits are " +
+        "unsigned. For deny-by-default local enforcement use @atlasent/mcp-gate; " +
+        "for an organizational permit, configure a hosted backend.",
+    ],
     audit_id,
   };
 }
