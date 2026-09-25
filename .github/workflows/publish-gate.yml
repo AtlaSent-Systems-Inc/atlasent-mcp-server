@@ -111,5 +111,20 @@ jobs:
             || { echo "::error::refusing to publish: the gate did not block a destructive call"; exit 1; }
           rm -f out.jsonl
 
+      # Trusted publishing needs npm >= 11.5.1 and the Node 22 runner ships npm
+      # 10.x, so without this the publish below fails to authenticate — there is
+      # no NPM_TOKEN to fall back on, by design. publish.yml carries the same
+      # step for the same reason; this workflow was missing it, and because a tag
+      # pins the workflow file it ran, discovering that at `gate-v0.1.0` would
+      # have burned the version (see v2.12.1 -> v2.12.2 in CLAUDE.md).
+      #
+      # Trusted publishing is also configured PER PACKAGE on npmjs.com, and
+      # @atlasent/mcp-gate has never been published: it needs a pending publisher
+      # (repo Atlasent/atlasent-mcp-server, workflow publish-gate.yml,
+      # environment npm) or this step fails on auth. That one is fixable without
+      # a new version, since it is not a change to this file.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@^11.5.1 && npm --version
+
       - name: Publish to npm
         run: npm publish --access public --provenance
