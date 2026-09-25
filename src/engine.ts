@@ -64,7 +64,8 @@ function emitLocalModeWarning(): void {
       "Per atlasent/MATURITY_DOCTRINE.md, local mode is classified " +
       "Experimental and is intended for development and CI only. " +
       "For production-authoritative authorization, set ATLASENT_API_KEY " +
-      "and ATLASENT_BASE_URL to use the hosted AtlaSent backend. " +
+      "and ATLASENT_BASE_URL to use the hosted AtlaSent backend " +
+      "(get an API key: https://console.atlasent.io/auth/sign-up?utm_source=mcp&utm_medium=cli). " +
       "See SECURITY.md § 'Maturity classification' for details. " +
       "Set ATLASENT_SUPPRESS_LOCAL_MODE_WARNING=true to silence this warning " +
       "in dev/CI scripts.",

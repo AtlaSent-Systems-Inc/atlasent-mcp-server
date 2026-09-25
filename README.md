@@ -73,7 +73,7 @@ Built-in local rules (`src/localEngine.ts`):
 | Override / release / export / import / publish actions | `hold` |
 | Anything that passes the rules | `allow` → single-use permit, 5-minute TTL |
 
-Local permits are **unsigned**, so local mode is for development, CI, and trying things out. It's not a production enforcement boundary. The server refuses to fall back to local mode under `NODE_ENV=production`. When you're ready for signed permits, audit evidence, and your organization's own policies, switch to [remote mode](#local-vs-remote-mode).
+Local permits are **unsigned**, so local mode is for development, CI, and trying things out. It's not a production enforcement boundary. The server refuses to fall back to local mode under `NODE_ENV=production`. When you're ready for signed permits, audit evidence, and your organization's own policies, switch to [remote mode](#local-vs-remote-mode) — [get an API key](#get-an-api-key).
 
 ### Run from source
 
@@ -326,6 +326,20 @@ Keep these statements distinct:
 |---|---|
 | `local` | Zero-config: offline in-process rules engine, unsigned permits. Development, demos, CI. |
 | `remote` | Calls the configured AtlaSent hosted/runtime API. |
+
+### Get an API key
+
+1. Create an account at
+   **[console.atlasent.io/auth/sign-up](https://console.atlasent.io/auth/sign-up?utm_source=mcp&utm_medium=readme)**.
+2. In the console, open **API keys** and create a key with the `evaluate:write`
+   and `verify:execute` scopes.
+3. Set `ATLASENT_API_KEY` (and optionally `ATLASENT_BASE_URL`) in your MCP host
+   config, as in the example below. The server switches to remote mode
+   automatically when both are set.
+
+Remote mode gives you what local mode cannot: Ed25519-signed, single-use permits,
+your organization's own policies, and a tamper-evident audit trail you can verify
+offline.
 
 Remote example:
 
