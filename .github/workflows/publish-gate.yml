@@ -26,8 +26,20 @@ name: Publish MCP Gate to npm
 #     context.workflow "Publish MCP Gate to npm"
 #     context.event_name "push"
 #     context.ref     ^refs/tags/gate-v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$
+#     context.artifact "atlasent-mcp-gate"
 # following the shape of package_release_atlasent_mcp_server_tag_release_manager.
 # That is a production authorization-state change and is founder-gated.
+#
+# The discriminator is `context.artifact`, NOT `context.package`. Every template
+# in that bundle that distinguishes one artifact from another within a repo reads
+# `context.artifact` (`mcp-registry`, `npm-packages`, `atlasent-audit-verify`,
+# `atlasent-runtime`, ...), and a field no template reads cannot deny — it is
+# simply absent from the match, which is indistinguishable from a template that
+# was never scoped to this package at all. The value is the artifact identity
+# (`atlasent-mcp-gate`), not the npm package name: the drafted template asserts
+# `@atlasent/mcp-gate` is DENIED, so sending the package name here would fail the
+# gate rather than quietly widen it. The matching draft is atlasent-api
+# `docs/runbooks/PACKAGE_RELEASE_V9_APPLY.md`.
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -76,7 +88,7 @@ jobs:
           actor: ${{ github.actor }}
           environment: production
           api-url: https://kttccumlnmdtupgbyfue.supabase.co/functions/v1
-          context: '{"ref": "${{ github.ref }}", "repo": "${{ github.repository }}", "package": "@atlasent/mcp-gate"}'
+          context: '{"ref": "${{ github.ref }}", "repo": "${{ github.repository }}", "artifact": "atlasent-mcp-gate"}'
 
       # The package has zero npm dependencies, so there is nothing to install.
       # These are the same assertions ci.yml runs: the unit suite, and a real
