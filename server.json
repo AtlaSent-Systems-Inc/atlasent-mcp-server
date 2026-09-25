@@ -30,7 +30,7 @@
         },
         {
           "name": "ATLASENT_MODE",
-          "description": "remote (default when API key + base URL set) or local (in-process rules engine, no API calls)",
+          "description": "remote (default when an API key is set) or local (in-process rules engine, no API calls)",
           "isRequired": false,
           "choices": ["remote", "local"]
         }

@@ -81,7 +81,7 @@ The guarantee: if `authorize()` does not return `allow`, the action code never r
 
 - `ATLASENT_MODE=remote` -> hosted AtlaSent API
 - `ATLASENT_MODE=local` -> in-process rules engine
-- Unset -> `remote` if both `ATLASENT_API_KEY` and `ATLASENT_BASE_URL` are set, else `local`
+- Unset -> `remote` if `ATLASENT_API_KEY` is set (`ATLASENT_BASE_URL` defaults to `https://api.atlasent.io/functions/v1`), else `local`. Before 2026-09-25 a key without a base URL silently fell back to forgeable local mode, contradicting server.json and the README.
 
 ## Build, test, run
 

@@ -12,6 +12,8 @@ export type ActionContext = {
   approvals?: string[];
   change_window?: string;
   tool_name?: string;
+  /** Tool being invoked; the agent.tool.invoke class requires `context.tool`. */
+  tool?: string;
   state_snapshot?: Record<string, unknown>;
   /**
    * Target resource the permit is bound to (service, artifact, tool-call

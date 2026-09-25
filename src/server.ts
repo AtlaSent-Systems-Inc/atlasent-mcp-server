@@ -247,6 +247,11 @@ async function agentToolGate(
     actor_id: actorId,
     environment,
     tool_name: toolName,
+    // The runtime's agent.tool.invoke class declares required_context_inputs
+    // ['tool', 'environment'] (seed_ai_agent_safeguard, Canon ACT-0029). It
+    // reads `context.tool`, not `tool_name`; without it every gated call is
+    // denied for a missing required input.
+    tool: toolName,
     // The tool being invoked is this gate's target. `tool_name` alone rides in
     // context for audit and is NOT one of the runtime's binding fields
     // (target/target_id/ref/workflow_id/run_id/commit_sha), so without this a

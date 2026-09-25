@@ -7,8 +7,9 @@
  *
  *   ATLASENT_MODE=remote            → hosted AtlaSent API
  *   ATLASENT_MODE=local             → local rules engine
- *   (unset)                         → remote if ATLASENT_API_KEY and
- *                                      ATLASENT_BASE_URL are set, else local
+ *   (unset)                         → remote if ATLASENT_API_KEY
+ *                                      is set (ATLASENT_BASE_URL defaults to the
+ *                                      hosted endpoint), else local
  *
  * Production safeguard: local-mode permits are unsigned and forgeable
  * (Date.now() + UUID slice, no HMAC — see src/localEngine.ts shortId()).
@@ -76,8 +77,9 @@ function emitBaseUrlWarning(): void {
   if (BASE_URL_WARNING_EMITTED) return;
   if (process.env.NODE_ENV === "test") return;
   if (process.env.ATLASENT_SUPPRESS_BASE_URL_WARNING === "true") return;
-  const url = process.env.ATLASENT_BASE_URL ?? "";
-  if (url.includes("/functions/v1")) return;
+  const url = process.env.ATLASENT_BASE_URL;
+  // Unset means the default hosted base, which already has the suffix.
+  if (url === undefined || url.includes("/functions/v1")) return;
   BASE_URL_WARNING_EMITTED = true;
   // eslint-disable-next-line no-console
   console.error(
@@ -97,7 +99,11 @@ export function getMode(): Mode {
       ? "remote"
       : explicit === "local"
         ? "local"
-        : process.env.ATLASENT_API_KEY && process.env.ATLASENT_BASE_URL
+        : // An API key alone means remote: ATLASENT_BASE_URL is optional and
+          // defaults to the hosted endpoint (see baseUrl(), README, server.json).
+          // Falling back to local here would silently hand a user who configured
+          // a real key unsigned, forgeable local-mode permits.
+          process.env.ATLASENT_API_KEY
           ? "remote"
           : "local";
 
@@ -495,6 +501,7 @@ async function authorizeRemote(ctx: ActionContext): Promise<Decision> {
   if (ctx.approvals !== undefined) context.approvals = ctx.approvals;
   if (ctx.change_window !== undefined) context.change_window = ctx.change_window;
   if (ctx.tool_name !== undefined) context.tool_name = ctx.tool_name;
+  if (ctx.tool !== undefined) context.tool = ctx.tool;
 
   const body = buildEvaluateRequestBody({
     action_type: ctx.action_type,

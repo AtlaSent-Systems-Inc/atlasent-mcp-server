@@ -2088,6 +2088,10 @@ describe("target binding", () => {
     const gateCtx = (gateEval!.context ?? {}) as Record<string, unknown>;
     assert.equal(gateEval!.resource_id, "deploy_service");
     assert.equal(gateCtx.target_id, "deploy_service");
+    // agent.tool.invoke declares required_context_inputs ['tool','environment'];
+    // `tool_name` alone is not read, so without `tool` the gate always denies.
+    assert.equal(gateCtx.tool, "deploy_service");
+    assert.equal(gateCtx.environment, "production");
   });
 });
 
