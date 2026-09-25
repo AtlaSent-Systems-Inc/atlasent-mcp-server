@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "apiUrl": "https://YOUR-APPROVED-RUNTIME/functions/v1",
+  "actorId": "YOUR-REGISTERED-ACTOR-ID",
+  "gateId": "developer-gate-01",
+  "environment": "sandbox",
+  "tools": {
+    "set_status": { "actionType": "tool.set_status", "targetId": "demo:sandbox" }
+  }
+}

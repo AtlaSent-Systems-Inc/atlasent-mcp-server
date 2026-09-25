@@ -355,6 +355,26 @@ no template and denies. Releasing from this repo now means pushing a real `v*`
 tag. Do not "fix" that by relaxing the ref condition; the tag binding is what
 makes the permit name a specific version.
 
+**`@atlasent/mcp-gate` has no template yet either, and `publish-gate.yml` denies
+until one is seeded — by design.** v5 covers this repo's two `@atlasent/mcp-server`
+release paths only. `packages/mcp-gate` publishes on its own `gate-v*` tag through
+`publish-gate.yml` ("Publish MCP Gate to npm"), a workflow name and tag prefix no
+template matches, so every `gate-v*` push reaches a real `No template condition
+matched` deny. That is the gate working. Do NOT rename the workflow to impersonate
+an existing template and do NOT add a `skip_gate` input. The drafted template is
+atlasent-api `docs/runbooks/package_release_v9/` (runbook
+`docs/runbooks/PACKAGE_RELEASE_V9_APPLY.md`); it stacks on that repo's v8 draft,
+so it is two applies away from the live bundle and both need a founder go-ahead.
+
+Its discriminator is **`context.artifact: "atlasent-mcp-gate"`**, not
+`context.package`. `publish-gate.yml` originally sent `"package":
+"@atlasent/mcp-gate"` — a field no template in this bundle reads, so it could
+never have matched, and a field that is simply absent from a match cannot deny;
+it looks identical to a template that was never scoped to the package. The value
+is the artifact identity, not the npm package name: the drafted template asserts
+`@atlasent/mcp-gate` is denied, which is the assertion that catches this exact
+mix-up. Fixed before the first `gate-v*` tag was ever pushed.
+
 Verified post-write, against the STORED row rather than the drafted form:
 exactly one `active` bundle for this action class; a server-side `jsonb`
 equality check confirmed the local copy matched the stored row byte-for-byte

@@ -1,0 +1,130 @@
+name: Publish MCP Gate to npm
+
+# @atlasent/mcp-gate publishes on its OWN tag prefix (`gate-v*`), separately from
+# @atlasent/mcp-server's `v*`. The two packages point in opposite directions — the
+# server exposes AtlaSent as MCP tools an agent calls, the gate sits in front of
+# someone else's MCP server and intercepts — so coupling their version numbers to
+# one tag would force lockstep releases of two packages with different audiences
+# and different maturity. atlasent-action uses the same split (`npm-v*` alongside
+# its `v*` action tags).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# BEFORE THE FIRST TAG PUSH: this workflow WILL be denied, by design.
+#
+# The AtlaSent release gate below authorizes against `package.release`, and that
+# policy's release-manager templates match on the exact workflow display name and
+# an exact tag-ref regex. This workflow's name ("Publish MCP Gate to npm") and tag
+# prefix (`gate-v*`) are new, so no existing template can match them and the gate
+# denies with `No template condition matched`. That is the gate working, not a bug
+# to route around — do NOT rename this workflow to impersonate an existing
+# template, and do NOT add a `skip_gate` input.
+#
+# A template must be seeded for the org whose key this repo's ATLASENT_API_KEY
+# resolves to, matching:
+#     actor_id        github:<release manager>
+#     context.repo    Atlasent/atlasent-mcp-server
+#     context.workflow "Publish MCP Gate to npm"
+#     context.event_name "push"
+#     context.ref     ^refs/tags/gate-v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$
+#     context.artifact "atlasent-mcp-gate"
+# following the shape of package_release_atlasent_mcp_server_tag_release_manager.
+# That is a production authorization-state change and is founder-gated.
+#
+# The discriminator is `context.artifact`, NOT `context.package`. Every template
+# in that bundle that distinguishes one artifact from another within a repo reads
+# `context.artifact` (`mcp-registry`, `npm-packages`, `atlasent-audit-verify`,
+# `atlasent-runtime`, ...), and a field no template reads cannot deny — it is
+# simply absent from the match, which is indistinguishable from a template that
+# was never scoped to this package at all. The value is the artifact identity
+# (`atlasent-mcp-gate`), not the npm package name: the drafted template asserts
+# `@atlasent/mcp-gate` is DENIED, so sending the package name here would fail the
+# gate rather than quietly widen it. The matching draft is atlasent-api
+# `docs/runbooks/PACKAGE_RELEASE_V9_APPLY.md`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    tags: ["gate-v*"]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    defaults:
+      run:
+        working-directory: packages/mcp-gate
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) — no stored NPM_TOKEN
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify version tag matches package.json
+        if: github.event_name == 'push'
+        run: |
+          TAG="${GITHUB_REF_NAME#gate-v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG_VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match packages/mcp-gate version ${PKG_VERSION}"
+            exit 1
+          fi
+          echo "Tag ${GITHUB_REF_NAME} matches version ${PKG_VERSION}"
+
+      # ── AtlaSent release gate ────────────────────────────────────────
+      # Fail-closed: if the permit is not verified, nothing publishes.
+      # See the header for why this denies until a template is seeded.
+      - name: AtlaSent release gate
+        uses: Atlasent/atlasent-action@v1
+        env:
+          ATLASENT_API_KEY: ${{ secrets.ATLASENT_API_KEY }}
+        with:
+          action: package.release
+          actor: ${{ github.actor }}
+          environment: production
+          api-url: https://kttccumlnmdtupgbyfue.supabase.co/functions/v1
+          context: '{"ref": "${{ github.ref }}", "repo": "${{ github.repository }}", "artifact": "atlasent-mcp-gate"}'
+
+      # The package has zero npm dependencies, so there is nothing to install.
+      # These are the same assertions ci.yml runs: the unit suite, and a real
+      # destructive call proved to come back blocked. A publish is the last place
+      # to take "the tests passed" on trust.
+      - name: Unit tests
+        run: node --test test/*.node.mjs
+
+      - name: Prove the gate still blocks before publishing it
+        run: |
+          set -euo pipefail
+          node cli.mjs setup "$RUNNER_TEMP/gate" -- node "$PWD/demo-server.mjs"
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_status","arguments":{"environment":"production","status":"deleted"}}}' \
+            | timeout 30 node cli.mjs run-dir "$RUNNER_TEMP/gate/policy.json" "$RUNNER_TEMP/gate/activity" \
+                -- node "$PWD/demo-server.mjs" > out.jsonl
+          cat out.jsonl
+          grep '"id":2' out.jsonl | grep -q 'Blocked by AtlaSent Gate' \
+            || { echo "::error::refusing to publish: the gate did not block a destructive call"; exit 1; }
+          rm -f out.jsonl
+
+      # Trusted publishing needs npm >= 11.5.1 and the Node 22 runner ships npm
+      # 10.x, so without this the publish below fails to authenticate — there is
+      # no NPM_TOKEN to fall back on, by design. publish.yml carries the same
+      # step for the same reason; this workflow was missing it, and because a tag
+      # pins the workflow file it ran, discovering that at `gate-v0.1.0` would
+      # have burned the version (see v2.12.1 -> v2.12.2 in CLAUDE.md).
+      #
+      # Trusted publishing is also configured PER PACKAGE on npmjs.com, and
+      # @atlasent/mcp-gate has never been published: it needs a pending publisher
+      # (repo Atlasent/atlasent-mcp-server, workflow publish-gate.yml,
+      # environment npm) or this step fails on auth. That one is fixable without
+      # a new version, since it is not a change to this file.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@^11.5.1 && npm --version
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
