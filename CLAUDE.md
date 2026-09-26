@@ -355,23 +355,34 @@ no template and denies. Releasing from this repo now means pushing a real `v*`
 tag. Do not "fix" that by relaxing the ref condition; the tag binding is what
 makes the permit name a specific version.
 
-**`@atlasent/mcp-gate` has no template yet either, and `publish-gate.yml` denies
-until one is seeded — by design.** v5 covers this repo's two `@atlasent/mcp-server`
-release paths only. `packages/mcp-gate` publishes on its own `gate-v*` tag through
-`publish-gate.yml` ("Publish MCP Gate to npm"), a workflow name and tag prefix no
-template matches, so every `gate-v*` push reaches a real `No template condition
-matched` deny. That is the gate working. Do NOT rename the workflow to impersonate
-an existing template and do NOT add a `skip_gate` input. The drafted template is
-atlasent-api `docs/runbooks/package_release_v9/` (runbook
-`docs/runbooks/PACKAGE_RELEASE_V9_APPLY.md`); it stacks on that repo's v8 draft,
-so it is two applies away from the live bundle and both need a founder go-ahead.
+**CORRECTED 2026-09-26 — `@atlasent/mcp-gate` HAS a template and
+`publish-gate.yml` reaches `allow`.** This paragraph said the gate "denies until
+one is seeded" and named the drafted `package_release_v9` as the thing to apply.
+Both are now wrong, in the one direction a stale note must never take: it tells a
+reader a working authorization gate cannot pass, and points at a runbook whose SQL
+now carries a `SUPERSEDED — DO NOT RUN` banner. Same failure shape
+`atlasent-action`'s `RELEASING.md` records for its own release gate.
+
+What is true, read from the live bundle rather than from a runbook: the active
+`package.release` bundle for this org is **v10**
+(`773a5972-76eb-402c-a288-346a7d9c9ceb`, 32 templates), and it carries
+`package_release_atlasent_mcp_gate_tag_release_manager`. `publish-gate.yml`
+("Publish MCP Gate to npm", `gate-v*`) matched it on a real tag push and returned
+`allow` — the first live exercise of that template — and
+`@atlasent/mcp-gate@0.1.0` is on npm with provenance. **v9 was superseded by v10
+before it was ever applied; never apply `docs/runbooks/package_release_v9/`.**
+
+Still binding, unchanged: do NOT rename this workflow to impersonate another
+template, and do NOT add a `skip_gate` input. A `workflow_dispatch` of it denies
+and that is correct — a dispatch carries `ref: refs/heads/main` and no tag, so it
+matches no template. Releasing means pushing a real `gate-v*` tag.
 
 Its discriminator is **`context.artifact: "atlasent-mcp-gate"`**, not
 `context.package`. `publish-gate.yml` originally sent `"package":
 "@atlasent/mcp-gate"` — a field no template in this bundle reads, so it could
 never have matched, and a field that is simply absent from a match cannot deny;
 it looks identical to a template that was never scoped to the package. The value
-is the artifact identity, not the npm package name: the drafted template asserts
+is the artifact identity, not the npm package name: the template asserts
 `@atlasent/mcp-gate` is denied, which is the assertion that catches this exact
 mix-up. Fixed before the first `gate-v*` tag was ever pushed.
 

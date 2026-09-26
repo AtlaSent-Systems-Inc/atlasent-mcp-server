@@ -54,7 +54,7 @@ Local allow rules are operator configuration, **not AtlaSent organizational perm
 see [the authority ladder](../../README.md#which-authority-decided) for what that means
 and what it does not.
 
-Published to npm as `@atlasent/mcp-gate`. Version 0.x: the local gate is exercised by 31
+Published to npm as `@atlasent/mcp-gate`. Version 0.x: the local gate is exercised by 32
 tests and is the supported path; the cloud mode in `cloud.mjs` is further along in code
 than in live proof — approval waiting needs an `approvals:read` scope that console
 self-service does not issue yet, so generated configurations ship with waiting off and
