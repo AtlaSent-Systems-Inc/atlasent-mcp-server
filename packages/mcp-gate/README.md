@@ -27,7 +27,9 @@ policy files. Generating files does not establish a live connection.
 For a repeatable live acceptance run, create a connection file with **both**
 `read_status` and `set_status` mapped to existing sandbox action types/targets whose
 published policies permit the demo. Set `ATLASENT_GATE_API_KEY` securely to a dedicated
-test execution key with `evaluate:write` and `verify:execute`, then run from this package:
+test execution key with `evaluate:write` and `verify:execute`, then run this from a
+checkout of this repository, in `packages/mcp-gate`. The `test/` directory is **not**
+part of the published npm package, so this is not runnable from an `npx` install:
 
 ```sh
 node test/live-sandbox.mjs /absolute/connection.json /absolute/new-acceptance-directory
@@ -178,7 +180,9 @@ blocked content leaves the file unchanged, an exact permitted write changes the 
 readback confirms the contents, and an unmapped tool is denied. Payloads and paths do
 not enter audit logs. This is independent test readback, not a runtime verifier feature.
 
-Reproduce using a separate dependency installation (not Gate runtime dependencies):
+Reproduce from a checkout of this repository, in `packages/mcp-gate`, using a separate
+dependency installation (not Gate runtime dependencies). As above, `test/` is not part
+of the published npm package:
 
 ```sh
 npm install --prefix /absolute/reference-install --ignore-scripts @modelcontextprotocol/server-filesystem@2026.8.31
@@ -202,9 +206,13 @@ before providing a key. The key's server-side scope determines the organization;
 caller-supplied organization ID is never used to select another tenant.
 
 ```sh
-node cli.mjs check-connection connection.json
-node cli.mjs setup-connected /absolute/new-connected-folder connection.json -- node /absolute/path/server.mjs
+npx @atlasent/mcp-gate check-connection connection.json
+npx @atlasent/mcp-gate setup-connected /absolute/new-connected-folder connection.json -- node /absolute/path/server.mjs
 ```
+
+Or from a checkout of this repository, `node cli.mjs check-connection …` in this directory.
+`check-connection` validates the file's shape only — it performs no network call and
+proves nothing about whether the mapped action types exist or would authorize.
 
 Review the generated `policy.json` and add the explicit local tool rules you need.
 Copy the generated MCP client entry. Supply **ATLASENT_GATE_API_KEY** to the Gate

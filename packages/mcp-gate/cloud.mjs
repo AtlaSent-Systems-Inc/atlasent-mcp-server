@@ -8,6 +8,13 @@ export function validateConnection(c) {
   if (!object(c) || c.version !== 1 || !text(c.actorId) || !name(c.gateId) || !['sandbox','production'].includes(c.environment) || !object(c.tools) || !Object.keys(c.tools).length || Object.keys(c).some(k => !['version','apiUrl','actorId','gateId','environment','tools','approvalWaitMs','approvalsUrl'].includes(k))) throw Error('Invalid connection');
   const u = new URL(c.apiUrl);
   if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) throw Error('HTTPS endpoint required');
+  // connection.example.json ships `YOUR-APPROVED-RUNTIME` / `YOUR-REGISTERED-ACTOR-ID`.
+  // Unedited, those passed every check here and `check-connection` printed "valid",
+  // which reads as "ready to connect" for a file that names no real runtime or actor.
+  // Matched as EXACT literals, not a `your-` prefix: a prefix would reject legitimate
+  // values like actor `your-team-bot`, turning a footgun guard into a false refusal.
+  // Compared case-insensitively because URL lowercases the hostname.
+  if (u.hostname.toLowerCase() === 'your-approved-runtime' || c.actorId.toUpperCase() === 'YOUR-REGISTERED-ACTOR-ID') throw Error('Replace the example placeholders before connecting');
   if (c.approvalWaitMs !== undefined && (!Number.isInteger(c.approvalWaitMs) || c.approvalWaitMs < 0 || c.approvalWaitMs > 120000)) throw Error('Invalid approval wait');
   if (c.approvalsUrl !== undefined || c.approvalWaitMs > 0) {
     const a = new URL(c.approvalsUrl);

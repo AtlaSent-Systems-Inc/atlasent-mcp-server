@@ -26,7 +26,16 @@ async function main() {
     const dir = setup(args[0], args[3], args.slice(4), connection);
     console.error('Connected setup created: ' + dir + '\nReview CONNECTED-MODE.txt and policy.json before using the generated client entry.');
   } else if (mode === 'check-connection' && args.length === 1) {
-    validateConnection(JSON.parse(readFileSync(args[0], 'utf8')));
+    const parsed = JSON.parse(readFileSync(args[0], 'utf8'));
+    // Name the failing rule. Every message validateConnection throws is a fixed string
+    // authored here with no interpolation, so this echoes no file or upstream content.
+    // The global catch below stays deliberately generic on purpose: the run paths can
+    // fail carrying upstream text the gate must never repeat.
+    try { validateConnection(parsed); } catch (e) {
+      console.error('Connection configuration rejected: ' + e.message);
+      process.exitCode = 1;
+      return;
+    }
     console.error('Connection configuration valid; no remote enrollment performed');
   } else if (mode === 'setup' && args.length >= 3 && args[1] === '--') {
     const dir = setup(args[0], args[2], args.slice(3));
