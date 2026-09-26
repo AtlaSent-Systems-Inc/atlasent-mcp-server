@@ -1,0 +1,91 @@
+# Platform and reference coverage for @atlasent/mcp-gate.
+#
+# Why this is a separate, paths-filtered workflow rather than more jobs on
+# ci.yml: ci.yml has NO paths filter, so every job in it runs on every PR commit
+# and every push to main. GitHub bills per JOB, rounded up to the minute, and
+# Windows minutes bill at a multiple of Linux. A narrow paths: filter is the
+# optimal cost control for a job that only needs to run when one package
+# changes, so these fire only on packages/mcp-gate/** (plus this file).
+#
+# These two jobs exist to reach PARITY with atlasent-llm-integrations'
+# mcp-gate.yml before that repo's duplicate copy of this package is retired.
+# That copy tested the package BETTER than the repo that publishes it: it ran
+# the official-SDK reference acceptance and a Windows suite, neither of which
+# ran here, so @atlasent/mcp-gate shipped as the less-tested of two copies.
+# Retiring the duplicate before this landed would have traded a duplicate for a
+# coverage hole.
+name: MCP Gate platform
+
+on:
+  pull_request:
+    paths:
+      - 'packages/mcp-gate/**'
+      - '.github/workflows/mcp-gate-platform.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/mcp-gate/**'
+      - '.github/workflows/mcp-gate-platform.yml'
+
+permissions:
+  contents: read
+
+# Supersede stale PR runs only. push runs are never cancelled.
+concurrency:
+  group: mcp-gate-platform-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      # The explicit file list and count check are load-bearing, and NOT for the
+      # reason it looks like. Checked against real Node 22.22.2 rather than
+      # assumed: `node --test 'test/*.node.mjs'` DOES expand the pattern itself,
+      # so it would work under pwsh without Get-ChildItem. The hazard is the
+      # next step along -- a pattern that matches nothing reports `# tests 0`
+      # and exits **0**. So any path or pattern mistake here passes green having
+      # run nothing, which is the failure this repo keeps finding in its own
+      # guards. The count check is what turns that into a failure; propagating
+      # $LASTEXITCODE is what lets a real test failure through. Keep both.
+      - name: Verify Gate on Windows
+        shell: pwsh
+        run: |
+          $gateTests = @(Get-ChildItem "packages/mcp-gate/test/*.node.mjs" | Select-Object -ExpandProperty FullName)
+          if ($gateTests.Count -lt 1) {
+            Write-Error "no gate test files matched; this step would otherwise pass having run nothing"
+            exit 1
+          }
+          Write-Host "running $($gateTests.Count) gate test file(s) on Node $(node --version)"
+          node --test $gateTests
+          exit $LASTEXITCODE
+
+  # Node 24 on Linux, so the README's "Node 22 and 24" is true rather than
+  # aspirational. ci.yml's mcp-gate job covers Node 22.
+  test-node24:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/mcp-gate
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Unit tests
+        run: node --test test/*.node.mjs
+      # Installed OUTSIDE the gate package: the claim under test is that the
+      # gate has no dependency on the server it proxies. Version pinned, so a
+      # green run is a statement about a known server rather than about whatever
+      # npm served that morning.
+      - name: Install reference MCP server outside the Gate package
+        run: npm install --prefix "$RUNNER_TEMP/mcp-reference" --ignore-scripts @modelcontextprotocol/server-filesystem@2026.8.31
+      - name: Verify official SDK and filesystem server compatibility
+        run: node test/reference-acceptance.mjs "$RUNNER_TEMP/mcp-reference/node_modules"
