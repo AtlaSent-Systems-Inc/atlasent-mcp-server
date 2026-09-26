@@ -64,6 +64,17 @@ test('the shipped example is rejected until its placeholders are replaced',async
  assert.throws(()=>validateConnection({...connection,apiUrl:'https://your-approved-runtime/functions/v1'}),/placeholders/);
  assert.throws(()=>validateConnection({...connection,actorId:'YOUR-REGISTERED-ACTOR-ID'}),/placeholders/);
  assert.throws(()=>validateConnection({...connection,actorId:'your-registered-actor-id'}),/placeholders/);
+ // The action type joined the placeholder set on 2026-09-26. It previously shipped as the
+ // concrete slug `tool.set_status`, which exists on ZERO orgs (live read of runtime prod,
+ // no Canon template either) while reading exactly like a real action type — so the one
+ // value a user was most likely to keep was the one that could never authorize.
+ assert.throws(()=>validateConnection({...connection,tools:{set_status:{actionType:'YOUR-PROVISIONED-ACTION-TYPE',targetId:'demo:sandbox'}}}),/placeholders/);
+ assert.throws(()=>validateConnection({...connection,tools:{set_status:{actionType:'your-provisioned-action-type',targetId:'demo:sandbox'}}}),/placeholders/);
+ // A placeholder in ANY mapping is caught, not just the first: a user who edits one tool
+ // and copies a second would otherwise ship the unedited one silently.
+ assert.throws(()=>validateConnection({...connection,tools:{real:{actionType:'agent.tool.invoke',targetId:'t'},stale:{actionType:'YOUR-PROVISIONED-ACTION-TYPE',targetId:'t'}}}),/placeholders/);
+ // Real action types containing 'your' are untouched — exact literal, never a prefix.
+ assert.ok(validateConnection({...connection,tools:{set_status:{actionType:'your-team.deploy',targetId:'demo:sandbox'}}}));
  // A real configuration is untouched: no false positive on an ordinary host or actor.
  assert.equal(validateConnection(connection).actorId,'agent-001');
  assert.ok(validateConnection({...connection,apiUrl:'https://yourcompany.example/functions/v1',actorId:'your-team-bot'}));

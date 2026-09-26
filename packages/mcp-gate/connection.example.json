@@ -5,6 +5,6 @@
   "gateId": "developer-gate-01",
   "environment": "sandbox",
   "tools": {
-    "set_status": { "actionType": "tool.set_status", "targetId": "demo:sandbox" }
+    "set_status": { "actionType": "YOUR-PROVISIONED-ACTION-TYPE", "targetId": "demo:sandbox" }
   }
 }
