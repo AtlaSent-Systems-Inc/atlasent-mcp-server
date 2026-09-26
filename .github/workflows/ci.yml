@@ -79,6 +79,28 @@ jobs:
             exit 1
           fi
 
+      # The package's README documents a reference acceptance run against the
+      # OFFICIAL MCP SDK client and a real third-party server, and claimed "CI
+      # repeats this on Node 22 and 24". It did not: this repo published
+      # @atlasent/mcp-gate while running that test nowhere. It ran only in
+      # atlasent-llm-integrations, against the unpublished copy of the package,
+      # so the artifact customers install was the less-tested one.
+      #
+      # Folded in as STEPS rather than a new job on purpose: GitHub bills per job,
+      # rounded up to the minute, and this job is already paying for its minute.
+      #
+      # Two details are load-bearing. The reference server is installed OUTSIDE
+      # the gate package, because the claim being tested is that the gate has no
+      # dependency on the server it proxies -- installing into packages/mcp-gate
+      # would quietly falsify it. And the version is pinned: an unpinned
+      # reference server turns a green run into a statement about whatever npm
+      # served that morning.
+      - name: Install reference MCP server outside the Gate package
+        run: npm install --prefix "$RUNNER_TEMP/mcp-reference" --ignore-scripts @modelcontextprotocol/server-filesystem@2026.8.31
+
+      - name: Verify official SDK and filesystem server compatibility
+        run: node test/reference-acceptance.mjs "$RUNNER_TEMP/mcp-reference/node_modules"
+
   # The Dockerfile is what Glama (glama.ai/mcp/servers) builds to start the
   # server and introspect its tools. Keep it building and answering
   # tools/list with no credentials, so the listing never goes stale.

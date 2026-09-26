@@ -189,8 +189,10 @@ npm install --prefix /absolute/reference-install --ignore-scripts @modelcontextp
 node test/reference-acceptance.mjs /absolute/reference-install/node_modules
 ```
 
-CI repeats this on Node 22 and 24. Unit tests use `*.node.mjs` intentionally so the
-parent repository's Vitest runner does not try to execute Node test suites.
+CI repeats this on Node 22 (`ci.yml`'s `mcp-gate` job) and Node 24
+(`mcp-gate-platform.yml`), and runs the unit suite on Windows for both. Unit tests
+use `*.node.mjs` intentionally so the parent repository's Vitest runner does not try
+to execute Node test suites.
 
 ## Connected authorization (experimental)
 
