@@ -202,10 +202,25 @@ inbox, or a billing integration. Local deny still wins. A cloud deny, hold, esca
 error or invalid permit never falls back to local allow. No cloud decision is cached.
 
 Copy `connection.example.json` and replace the runtime URL, registered actor, and tool
-mappings with values approved for your organization. The API base must be HTTPS and
-must be the base exposing `v1-evaluate` and `v1-verify-permit`. Review the destination
-before providing a key. The key's server-side scope determines the organization; a
-caller-supplied organization ID is never used to select another tenant.
+mappings with values approved for your organization. All three ship as explicit
+placeholders and `validateConnection` refuses each one, so the example cannot be
+connected unedited. The API base must be HTTPS and must be the base exposing
+`v1-evaluate` and `v1-verify-permit`. Review the destination before providing a key.
+The key's server-side scope determines the organization; a caller-supplied organization
+ID is never used to select another tenant.
+
+**There is no shipped default action type, and the example does not name a real one.**
+An `actionType` must be a class your organization has provisioned. Two facts are worth
+knowing before you map one, both read directly from the runtime rather than inferred:
+`action_classes.requires_verified_actor` defaults to **`true`** (its
+`requires_human_approval` / `requires_independent_approval` siblings default to `false`
+— the asymmetry is deliberate for a security product), so a newly created class requires
+a verified actor unless someone explicitly opted out; and connected mode presents
+`actorId` as a plain string, so a class requiring a verified actor answers
+`ACTOR_UNVERIFIED`, which arrives here as an ordinary `cloud_deny` indistinguishable
+from a policy refusal. Whether that should change is open on
+[#175](https://github.com/Atlasent/atlasent-mcp-server/issues/175) and is not settled by
+this note.
 
 ```sh
 npx @atlasent/mcp-gate check-connection connection.json

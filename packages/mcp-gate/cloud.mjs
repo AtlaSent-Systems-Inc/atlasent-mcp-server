@@ -8,12 +8,23 @@ export function validateConnection(c) {
   if (!object(c) || c.version !== 1 || !text(c.actorId) || !name(c.gateId) || !['sandbox','production'].includes(c.environment) || !object(c.tools) || !Object.keys(c.tools).length || Object.keys(c).some(k => !['version','apiUrl','actorId','gateId','environment','tools','approvalWaitMs','approvalsUrl'].includes(k))) throw Error('Invalid connection');
   const u = new URL(c.apiUrl);
   if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) throw Error('HTTPS endpoint required');
-  // connection.example.json ships `YOUR-APPROVED-RUNTIME` / `YOUR-REGISTERED-ACTOR-ID`.
-  // Unedited, those passed every check here and `check-connection` printed "valid",
-  // which reads as "ready to connect" for a file that names no real runtime or actor.
+  // connection.example.json ships `YOUR-APPROVED-RUNTIME` / `YOUR-REGISTERED-ACTOR-ID`
+  // / `YOUR-PROVISIONED-ACTION-TYPE`. Unedited, those passed every check here and
+  // `check-connection` printed "valid", which reads as "ready to connect" for a file
+  // that names no real runtime, actor or action class.
   // Matched as EXACT literals, not a `your-` prefix: a prefix would reject legitimate
   // values like actor `your-team-bot`, turning a footgun guard into a false refusal.
   // Compared case-insensitively because URL lowercases the hostname.
+  //
+  // The action type joined this list on 2026-09-26. The example previously shipped the
+  // concrete slug `tool.set_status`, which reads like a real AtlaSent action type and is
+  // not one: a live read of runtime prod found it on ZERO orgs, with no Canon template
+  // either. So two of the three values a user must replace announced themselves and the
+  // third did not, which invited keeping the one value that cannot work. The failure then
+  // landed past validation as an ordinary `cloud_deny` — indistinguishable from a policy
+  // refusal, which is the shape this package's own README warns `check-connection` cannot
+  // detect. This does not assert which action types mcp-gate SHOULD support; that is open
+  // on issue #175 and deliberately not decided here.
   if (u.hostname.toLowerCase() === 'your-approved-runtime' || c.actorId.toUpperCase() === 'YOUR-REGISTERED-ACTOR-ID') throw Error('Replace the example placeholders before connecting');
   if (c.approvalWaitMs !== undefined && (!Number.isInteger(c.approvalWaitMs) || c.approvalWaitMs < 0 || c.approvalWaitMs > 120000)) throw Error('Invalid approval wait');
   if (c.approvalsUrl !== undefined || c.approvalWaitMs > 0) {
@@ -22,6 +33,7 @@ export function validateConnection(c) {
   }
   for (const [tool, m] of Object.entries(c.tools)) {
     if (!name(tool) || !object(m) || !name(m.actionType) || !text(m.targetId) || Object.keys(m).some(k=>!['actionType','targetId'].includes(k))) throw Error('Invalid tool mapping');
+    if (m.actionType.toUpperCase() === 'YOUR-PROVISIONED-ACTION-TYPE') throw Error('Replace the example placeholders before connecting');
   }
   return c;
 }
