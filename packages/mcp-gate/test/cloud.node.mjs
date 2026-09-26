@@ -5,6 +5,7 @@ import { runGate } from '../gate.mjs';
 import { PassThrough } from 'node:stream';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
 
 const connection = {version:1,apiUrl:'https://runtime.example/functions/v1',actorId:'agent-001',gateId:'gate-001',environment:'sandbox',tools:{set_status:{actionType:'tool.set_status',targetId:'demo:sandbox'}}};
 const params = ()=>({name:'set_status',arguments:{environment:'sandbox',status:'ready'}});
@@ -52,6 +53,20 @@ test('bad key, unsafe endpoint, malformed transport and mapping never fall back'
   assert.equal((await cloudAuthorizer(connection,'ask_test_fixture',{fetchImpl})(params())).reason,'cloud_unavailable');
  }
  const t=transport();assert.equal((await cloudAuthorizer(connection,'ask_test_fixture',t)({name:'unknown',arguments:{}})).effect,'deny');assert.equal(t.calls.length,0);
+});
+test('the shipped example is rejected until its placeholders are replaced',async()=>{
+ // Reads the real file, so this cannot drift from what we actually ship: unedited,
+ // it used to pass every check and `check-connection` printed "valid".
+ const example=JSON.parse(await readFile(new URL('../connection.example.json',import.meta.url),'utf8'));
+ assert.throws(()=>validateConnection(example),/placeholders/);
+ // Each placeholder independently, and case-insensitively — URL lowercases the hostname.
+ assert.throws(()=>validateConnection({...connection,apiUrl:'https://YOUR-APPROVED-RUNTIME/functions/v1'}),/placeholders/);
+ assert.throws(()=>validateConnection({...connection,apiUrl:'https://your-approved-runtime/functions/v1'}),/placeholders/);
+ assert.throws(()=>validateConnection({...connection,actorId:'YOUR-REGISTERED-ACTOR-ID'}),/placeholders/);
+ assert.throws(()=>validateConnection({...connection,actorId:'your-registered-actor-id'}),/placeholders/);
+ // A real configuration is untouched: no false positive on an ordinary host or actor.
+ assert.equal(validateConnection(connection).actorId,'agent-001');
+ assert.ok(validateConnection({...connection,apiUrl:'https://yourcompany.example/functions/v1',actorId:'your-team-bot'}));
 });
 test('argument mutation during authorization is rejected',async()=>{
  const p=params();const t=transport({verify:()=>{p.arguments.status='tampered';return verified()}});
