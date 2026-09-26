@@ -227,6 +227,16 @@ identity supplied by Gate. `gateId` is local attribution bound into the executio
 not a registered device identity. Backend action setup, entitlements, independent approval
 requirements and actor restrictions still apply. Setup does not modify any of them.
 
+**A class that requires a verified actor cannot be authorized by this package.** That
+follows from the sentence above: Gate presents `actorId` as an assertion and mints no
+`actor_identity.v1`, so a class whose `requires_verified_actor` is set denies every call.
+Map only to classes that do not require one. Gate flags are per-organization, read from
+your own `action_classes` row and not implied by an action type's name, so check the row
+rather than the slug. `@atlasent/mcp-server` is the surface that does mint an agent
+identity — from an API key bound to a registered agent — so verified-actor classes go
+through it today. The refusal arrives as a plain `cloud_deny`, indistinguishable from an
+ordinary policy denial, which is worth knowing before you go looking for a policy bug.
+
 Requests send mapped action, target, actor, environment, a fresh request UUID, and a
 SHA-256 digest covering the entire invocation including exact arguments. Raw arguments
 and results remain local. Cloud policies cannot inspect fields we do not send; this
